@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// MarshalNoEscapeHTML 将 v 编码为单行 JSON 字符串，不进行 HTML 字符转义。
+// MarshalNoEscapeHTML 关闭HTML转义
 func MarshalNoEscapeHTML(v any) (str string, err error) {
 	buffer := &bytes.Buffer{}
 	encoder := json.NewEncoder(buffer)
@@ -16,5 +16,14 @@ func MarshalNoEscapeHTML(v any) (str string, err error) {
 		return
 	}
 	str = strings.TrimSpace(buffer.String())
+	return
+}
+
+// MustMarshalNoEscapeHTML 关闭 HTML 转义，编码失败时直接 panic。
+func MustMarshalNoEscapeHTML(v any) (str string) {
+	str, err := MarshalNoEscapeHTML(v)
+	if err != nil {
+		panic(err)
+	}
 	return
 }
