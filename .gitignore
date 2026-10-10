@@ -31,3 +31,26 @@ go.work.sum
 # Editor/IDE
 # .idea/
 # .vscode/
+.buildpath
+.hgignore.swp
+.project
+.orig
+.swp
+.idea/
+.settings/
+.vscode/
+vendor/
+composer.lock
+gitpush.sh
+pkg/
+bin/
+cbuild
+.DS_Store
+.test/
+main
+output/
+temp/
+*.log
+*.out
+cache/
+__debug_bin*
