@@ -18,9 +18,9 @@ import (
 
 type testKey int
 
-func newTestLogger(t *testing.T, options Options) (logger *Logger) {
+func newTestLogger(t *testing.T, config Config) (logger *Logger) {
 	t.Helper()
-	logger, err := New(options)
+	logger, err := New(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -30,7 +30,7 @@ func newTestLogger(t *testing.T, options Options) (logger *Logger) {
 
 func TestContextAndAttributes(t *testing.T) {
 	var buffer bytes.Buffer
-	logger := newTestLogger(t, Options{Writer: &buffer, TraceKey: testKey(1), ContextFields: []ContextField{
+	logger := newTestLogger(t, Config{Writer: &buffer, TraceKey: testKey(1), ContextFields: []ContextField{
 		{Name: "userId", Key: testKey(2)}, {Name: "zero", Key: testKey(3)},
 		{Name: "false", Key: testKey(4)}, {Name: "empty", Key: testKey(5)}, {Name: "nil", Key: testKey(6)},
 	}})
@@ -49,7 +49,7 @@ func TestContextAndAttributes(t *testing.T) {
 
 func TestCallerAndSkip(t *testing.T) {
 	var buffer bytes.Buffer
-	logger := newTestLogger(t, Options{Writer: &buffer})
+	logger := newTestLogger(t, Config{Writer: &buffer})
 	_, file, line, _ := runtime.Caller(0)
 	logger.Info(t.Context(), "direct")
 	expected := fmt.Sprintf("%s:%d INFO direct", filepath.Base(file), line+1)
@@ -88,7 +88,7 @@ func (explosiveStringer) String() (result string) { panic("must not format") }
 func TestFilteringCancellationAndClose(t *testing.T) {
 	var buffer bytes.Buffer
 	var level slog.LevelVar
-	logger := newTestLogger(t, Options{Writer: &buffer, Level: &level})
+	logger := newTestLogger(t, Config{Writer: &buffer, Level: &level})
 	logger.Debugf(t.Context(), "%s", explosiveStringer{})
 	if buffer.Len() != 0 {
 		t.Fatal("filtered record was written")
@@ -125,7 +125,7 @@ func (b *closingBuffer) Close() (err error) { b.closed = true; return }
 
 func TestErrorsAndOwnership(t *testing.T) {
 	failure := errors.New("write failure")
-	logger := newTestLogger(t, Options{Writer: failingWriter{err: failure}})
+	logger := newTestLogger(t, Config{Writer: failingWriter{err: failure}})
 	ctx := context.WithValue(t.Context(), "traceId", make(chan int))
 	diagnostic := captureStderr(t, func() { logger.Info(ctx, "failed") })
 	for _, expected := range []string{"write failure", "traceId", "goroutine ", "(*Logger).output", "TestErrorsAndOwnership"} {
@@ -136,13 +136,13 @@ func TestErrorsAndOwnership(t *testing.T) {
 	if strings.Count(diagnostic, "\ngoroutine ") != 1 {
 		t.Fatalf("expected one stack for combined errors: %s", diagnostic)
 	}
-	short := newTestLogger(t, Options{Writer: failingWriter{}})
+	short := newTestLogger(t, Config{Writer: failingWriter{}})
 	diagnostic = captureStderr(t, func() { short.Info(t.Context(), "short") })
 	if !strings.Contains(diagnostic, io.ErrShortWrite.Error()) || !strings.Contains(diagnostic, "goroutine ") {
 		t.Fatalf("short write diagnostic missing: %s", diagnostic)
 	}
 	var buffer closingBuffer
-	owned := newTestLogger(t, Options{Writer: &buffer})
+	owned := newTestLogger(t, Config{Writer: &buffer})
 	_ = owned.Close()
 	if buffer.closed {
 		t.Fatal("external writer closed")
@@ -151,8 +151,8 @@ func TestErrorsAndOwnership(t *testing.T) {
 
 func TestGroups(t *testing.T) {
 	var buffer bytes.Buffer
-	logger := newTestLogger(t, Options{Writer: &buffer})
-	h := logger.handler.WithGroup("request").WithAttrs([]slog.Attr{slog.Int("a", 1)}).WithGroup("child")
+	logger := newTestLogger(t, Config{Writer: &buffer})
+	h := logger.core.handler.WithGroup("request").WithAttrs([]slog.Attr{slog.Int("a", 1)}).WithGroup("child")
 	h = h.WithAttrs([]slog.Attr{slog.Int("b", 2)})
 	record := slog.NewRecord(time.Time{}, slog.LevelInfo, "groups", 0)
 	record.AddAttrs(slog.Int("c", 3), slog.Group(""), slog.Attr{})
@@ -162,20 +162,20 @@ func TestGroups(t *testing.T) {
 	}
 }
 
-func TestInvalidOptionsAndPanic(t *testing.T) {
+func TestInvalidConfigAndPanic(t *testing.T) {
 	var buffer bytes.Buffer
-	cases := []Options{
+	cases := []Config{
 		{Writer: &buffer, Skip: -1}, {Writer: &buffer, TraceKey: []string{"x"}},
 		{Writer: &buffer, ContextFields: []ContextField{{Name: "traceId", Key: "x"}}},
 		{Writer: &buffer, ContextFields: []ContextField{{Name: "user", Key: nil}}},
 	}
-	for _, options := range cases {
-		_, err := New(options)
+	for _, config := range cases {
+		_, err := New(config)
 		if err == nil {
-			t.Fatal("invalid options accepted")
+			t.Fatal("invalid config accepted")
 		}
 	}
-	logger := newTestLogger(t, Options{Writer: &buffer})
+	logger := newTestLogger(t, Config{Writer: &buffer})
 	for name, call := range map[string]func(){
 		"nil context":   func() { logger.Info(nil, "invalid") },
 		"negative skip": func() { logger.Skip(-1) },
@@ -194,7 +194,7 @@ func TestInvalidOptionsAndPanic(t *testing.T) {
 
 func TestConcurrentLogger(t *testing.T) {
 	var buffer bytes.Buffer
-	logger := newTestLogger(t, Options{Writer: &buffer})
+	logger := newTestLogger(t, Config{Writer: &buffer})
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
@@ -211,7 +211,7 @@ func TestConcurrentLogger(t *testing.T) {
 
 func TestGroupEncodingErrorPreservesSiblings(t *testing.T) {
 	var buffer bytes.Buffer
-	logger := newTestLogger(t, Options{Writer: &buffer})
+	logger := newTestLogger(t, Config{Writer: &buffer})
 	diagnostic := captureStderr(t, func() {
 		logger.Info(t.Context(), "encoding", slog.Group("group", slog.Any("bad", make(chan int)), slog.Int("good", 1)))
 	})
@@ -250,7 +250,7 @@ func captureStderr(t *testing.T, call func()) (output string) {
 
 func TestSuccessfulAndFilteredOutputHasNoDiagnostic(t *testing.T) {
 	var buffer bytes.Buffer
-	logger := newTestLogger(t, Options{Writer: &buffer})
+	logger := newTestLogger(t, Config{Writer: &buffer})
 	diagnostic := captureStderr(t, func() {
 		logger.Info(t.Context(), "success")
 		logger.Debugf(t.Context(), "%s", explosiveStringer{})

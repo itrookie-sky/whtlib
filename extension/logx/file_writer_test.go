@@ -11,9 +11,9 @@ import (
 	"time"
 )
 
-func testFileWriter(t *testing.T, options FileOptions) (writer *FileWriter) {
+func testFileWriter(t *testing.T, config FileConfig) (writer *FileWriter) {
 	t.Helper()
-	writer, err := NewFileWriter(options)
+	writer, err := NewFileWriter(config)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func readLogFiles(t *testing.T, path string) (files map[string]string) {
 
 func TestFileSizeRotationAndOversize(t *testing.T) {
 	path := t.TempDir()
-	writer := testFileWriter(t, FileOptions{Path: path, RotateSize: 8, RotateInterval: -1})
+	writer := testFileWriter(t, FileConfig{Path: path, RotateSize: 8, RotateInterval: -1})
 	for _, data := range []string{"aaaa\n", "bbbb\n", "long-record\n", "end\n"} {
 		n, err := writer.Write([]byte(data))
 		if err != nil || n != len(data) {
@@ -76,12 +76,12 @@ func TestFileSizeRotationAndOversize(t *testing.T) {
 
 func TestFileReopenAndClose(t *testing.T) {
 	path := t.TempDir()
-	writer := testFileWriter(t, FileOptions{Path: path})
+	writer := testFileWriter(t, FileConfig{Path: path})
 	_, err := writer.Write([]byte("before\n"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if writer.options.RotateBackupExpire != 24*time.Hour {
+	if writer.config.RotateBackupExpire != 24*time.Hour {
 		t.Fatal("retention default must be 24h")
 	}
 	err = writer.Sync()
@@ -93,7 +93,7 @@ func TestFileReopenAndClose(t *testing.T) {
 	if !errors.Is(err, os.ErrClosed) || !errors.Is(writer.Rotate(), os.ErrClosed) || !errors.Is(writer.Cleanup(), os.ErrClosed) || !errors.Is(writer.Sync(), os.ErrClosed) {
 		t.Fatal("operation after close accepted")
 	}
-	reopened := testFileWriter(t, FileOptions{Path: path})
+	reopened := testFileWriter(t, FileConfig{Path: path})
 	_, err = reopened.Write([]byte("after\n"))
 	if err != nil {
 		t.Fatal(err)
@@ -124,7 +124,7 @@ func TestCleanupRetentionAndIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	writer := testFileWriter(t, FileOptions{Path: path, RotateBackupLimit: 1, RotateInterval: -1})
+	writer := testFileWriter(t, FileConfig{Path: path, RotateBackupLimit: 1, RotateInterval: -1})
 	err = writer.Cleanup()
 	if err != nil {
 		t.Fatal(err)
@@ -145,7 +145,7 @@ func TestCleanupRetentionAndIsolation(t *testing.T) {
 
 func TestIdleRotationAndCleanup(t *testing.T) {
 	path := t.TempDir()
-	writer := testFileWriter(t, FileOptions{
+	writer := testFileWriter(t, FileConfig{
 		Path: path, RotateSize: -1, RotateInterval: 20 * time.Millisecond,
 		RotateBackupExpire: 100 * time.Millisecond, RotateCheckInterval: 5 * time.Millisecond,
 	})
@@ -170,7 +170,7 @@ func TestIdleRotationAndCleanup(t *testing.T) {
 
 func TestFileConcurrentRotationAndClose(t *testing.T) {
 	path := t.TempDir()
-	writer := testFileWriter(t, FileOptions{Path: path, RotateSize: 128, RotateInterval: -1})
+	writer := testFileWriter(t, FileConfig{Path: path, RotateSize: 128, RotateInterval: -1})
 	var wg sync.WaitGroup
 	for range 4 {
 		wg.Go(func() {
@@ -211,18 +211,18 @@ func TestFileConcurrentRotationAndClose(t *testing.T) {
 	wg.Wait()
 }
 
-func TestFileOptionsAndNoEmptyRotation(t *testing.T) {
-	for _, options := range []FileOptions{
+func TestFileConfigAndNoEmptyRotation(t *testing.T) {
+	for _, config := range []FileConfig{
 		{Path: t.TempDir(), File: "../app.log"}, {Path: t.TempDir(), RotateSize: -2},
 		{Path: t.TempDir(), RotateBackupExpire: -2}, {Path: t.TempDir(), RotateBackupLimit: -1},
 	} {
-		_, err := NewFileWriter(options)
+		_, err := NewFileWriter(config)
 		if err == nil {
-			t.Fatal("invalid file options accepted")
+			t.Fatal("invalid file config accepted")
 		}
 	}
 	path := t.TempDir()
-	writer := testFileWriter(t, FileOptions{Path: path, RotateSize: 1})
+	writer := testFileWriter(t, FileConfig{Path: path, RotateSize: 1})
 	_, err := writer.Write(nil)
 	if err != nil {
 		t.Fatal(err)
@@ -239,15 +239,15 @@ func TestFileOptionsAndNoEmptyRotation(t *testing.T) {
 }
 
 func TestLoggerOwnsDefaultWriter(t *testing.T) {
-	logger := newTestLogger(t, Options{File: FileOptions{Path: t.TempDir()}})
+	logger := newTestLogger(t, Config{File: FileConfig{Path: t.TempDir()}})
 	logger.Info(t.Context(), "owned")
 	_ = logger.Close()
 	select {
-	case <-logger.handler.state.owned.done:
+	case <-logger.core.handler.state.owned.done:
 	default:
 		t.Fatal("maintenance leaked after logger close")
 	}
-	_, err := logger.handler.state.owned.Write([]byte("closed"))
+	_, err := logger.core.handler.state.owned.Write([]byte("closed"))
 	if !errors.Is(err, os.ErrClosed) {
 		t.Fatal("owned file not closed")
 	}
@@ -257,7 +257,7 @@ func TestBackgroundErrorCallback(t *testing.T) {
 	root := t.TempDir()
 	path := filepath.Join(root, "logs")
 	reported := make(chan error, 1)
-	writer := testFileWriter(t, FileOptions{
+	writer := testFileWriter(t, FileConfig{
 		Path: path, RotateInterval: -1, RotateCheckInterval: 5 * time.Millisecond,
 		OnError: func(err error) {
 			select {

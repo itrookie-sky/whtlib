@@ -16,10 +16,10 @@ type ContextField struct {
 	Key  any
 }
 
-// Options 配置日志实例，零值使用默认文件输出和 Info 级别。
-type Options struct {
+// Config 配置日志实例，零值使用默认文件输出和 Info 级别。
+type Config struct {
 	Writer        io.Writer
-	File          FileOptions
+	File          FileConfig
 	Level         slog.Leveler
 	TraceKey      any
 	ContextFields []ContextField
@@ -45,9 +45,9 @@ func validKey(key any) (valid bool) {
 	return !isNil(key) && reflect.ValueOf(key).Comparable()
 }
 
-// BuildDefaultOptions 构建默认的 Options。
-func BuildDefaultOptions(options Options) (result Options, err error) {
-	result = options
+// BuildDefaultConfig 构建默认的 Config。
+func BuildDefaultConfig(config Config) (result Config, err error) {
+	result = config
 	if result.Skip < 0 {
 		return result, fmt.Errorf("logx: negative skip")
 	}
@@ -72,6 +72,60 @@ func BuildDefaultOptions(options Options) (result Options, err error) {
 			return result, fmt.Errorf("logx: invalid context field %q", field.Name)
 		}
 		seen[field.Name] = true
+	}
+	return
+}
+
+// mergeConfig 将显式非零字段合并到旧配置，nil 切片表示保留。
+func mergeConfig(previous Config, update Config) (result Config) {
+	result = previous
+	if update.Writer != nil {
+		result.Writer = update.Writer
+	}
+	if update.Level != nil {
+		result.Level = update.Level
+	}
+	if update.TraceKey != nil {
+		result.TraceKey = update.TraceKey
+	}
+	if update.ContextFields != nil {
+		result.ContextFields = update.ContextFields
+	}
+	if update.Skip != 0 {
+		result.Skip = update.Skip
+	}
+	if update.FullPath {
+		result.FullPath = true
+	}
+	result.File = mergeFileConfig(previous.File, update.File)
+	return
+}
+
+func mergeFileConfig(previous FileConfig, update FileConfig) (result FileConfig) {
+	result = previous
+	if update.Path != "" {
+		result.Path = update.Path
+	}
+	if update.File != "" {
+		result.File = update.File
+	}
+	if update.RotateSize != 0 {
+		result.RotateSize = update.RotateSize
+	}
+	if update.RotateInterval != 0 {
+		result.RotateInterval = update.RotateInterval
+	}
+	if update.RotateBackupExpire != 0 {
+		result.RotateBackupExpire = update.RotateBackupExpire
+	}
+	if update.RotateBackupLimit != 0 {
+		result.RotateBackupLimit = update.RotateBackupLimit
+	}
+	if update.RotateCheckInterval != 0 {
+		result.RotateCheckInterval = update.RotateCheckInterval
+	}
+	if update.OnError != nil {
+		result.OnError = update.OnError
 	}
 	return
 }

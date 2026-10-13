@@ -11,8 +11,8 @@ import (
 	"time"
 )
 
-// FileOptions 配置文件输出；零值使用默认值，部分阈值以 -1 禁用。
-type FileOptions struct {
+// FileConfig 配置文件输出；零值使用默认值，部分阈值以 -1 禁用。
+type FileConfig struct {
 	Path                string
 	File                string
 	RotateSize          int64
@@ -20,22 +20,22 @@ type FileOptions struct {
 	RotateBackupExpire  time.Duration
 	RotateBackupLimit   int
 	RotateCheckInterval time.Duration
-	// OnError 接收后台维护错误，回调内不能关闭当前 Writer 或 Logger。
+	// OnError 接收后台维护错误，回调内不能关闭当前 Writer/Logger 或调用 Logger.SetConfig。
 	OnError func(error)
 }
 
-// DefaultFileOptions 返回独立的默认配置，归档保留 24 小时。
-func DefaultFileOptions() (options FileOptions) {
-	return FileOptions{
+// DefaultFileConfig 返回独立的默认配置，归档保留 24 小时。
+func DefaultFileConfig() (config FileConfig) {
+	return FileConfig{
 		Path: "./logs", File: "app.log", RotateSize: 100 * 1024 * 1024,
 		RotateInterval: 24 * time.Hour, RotateBackupExpire: 24 * time.Hour,
 		RotateCheckInterval: time.Minute,
 	}
 }
 
-func normalizeFileOptions(options FileOptions) (result FileOptions, err error) {
-	result = options
-	defaults := DefaultFileOptions()
+func normalizeFileConfig(config FileConfig) (result FileConfig, err error) {
+	result = config
+	defaults := DefaultFileConfig()
 	if result.Path == "" {
 		result.Path = defaults.Path
 	}
@@ -74,7 +74,7 @@ func normalizeFileOptions(options FileOptions) (result FileOptions, err error) {
 // 同一活动文件只能由一个 FileWriter 管理。
 type FileWriter struct {
 	mu       sync.Mutex
-	options  FileOptions
+	config   FileConfig
 	file     *os.File
 	size     int64
 	started  time.Time
@@ -88,16 +88,16 @@ type FileWriter struct {
 }
 
 // NewFileWriter 创建文件 Writer 并启动后台维护，调用方需要 Close。
-func NewFileWriter(options FileOptions) (writer *FileWriter, err error) {
-	options, err = normalizeFileOptions(options)
+func NewFileWriter(config FileConfig) (writer *FileWriter, err error) {
+	config, err = normalizeFileConfig(config)
 	if err != nil {
 		return
 	}
-	err = os.MkdirAll(options.Path, 0o750)
+	err = os.MkdirAll(config.Path, 0o750)
 	if err != nil {
 		return
 	}
-	writer = &FileWriter{options: options, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
+	writer = &FileWriter{config: config, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	err = writer.openLocked(time.Now())
 	if err != nil {
 		return nil, err
@@ -111,7 +111,7 @@ func NewFileWriter(options FileOptions) (writer *FileWriter, err error) {
 }
 
 func (w *FileWriter) openLocked(now time.Time) (err error) {
-	path := filepath.Join(w.options.Path, w.options.File)
+	path := filepath.Join(w.config.Path, w.config.File)
 	info, statErr := os.Lstat(path)
 	if statErr == nil && !info.Mode().IsRegular() {
 		return fmt.Errorf("logx: active file is not a regular file")
@@ -166,8 +166,8 @@ func (w *FileWriter) Write(p []byte) (n int, err error) {
 			return
 		}
 	}
-	sizeDue := w.options.RotateSize > 0 && (w.size >= w.options.RotateSize || int64(len(p)) > w.options.RotateSize-w.size)
-	timeDue := w.options.RotateInterval > 0 && now.Sub(w.started) >= w.options.RotateInterval
+	sizeDue := w.config.RotateSize > 0 && (w.size >= w.config.RotateSize || int64(len(p)) > w.config.RotateSize-w.size)
+	timeDue := w.config.RotateInterval > 0 && now.Sub(w.started) >= w.config.RotateInterval
 	if w.size > 0 && (sizeDue || timeDue) {
 		err = w.rotateLocked(now)
 		if err != nil {
@@ -216,8 +216,26 @@ func (w *FileWriter) Close() (err error) {
 	return w.closeErr
 }
 
+// reconfigure 仅用于同一路径的策略更新，调用方已完成校验。
+func (w *FileWriter) reconfigure(config FileConfig) (err error) {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.closed {
+		return os.ErrClosed
+	}
+	w.config = config
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+	return
+}
+
 func (w *FileWriter) maintain() {
-	ticker := time.NewTicker(w.options.RotateCheckInterval)
+	w.mu.Lock()
+	interval := w.config.RotateCheckInterval
+	w.mu.Unlock()
+	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	defer close(w.done)
 	for {
@@ -235,13 +253,16 @@ func (w *FileWriter) maintain() {
 		err := w.pending
 		w.pending = nil
 		now := time.Now()
-		if w.file != nil && w.size > 0 && w.options.RotateInterval > 0 && now.Sub(w.started) >= w.options.RotateInterval {
+		if w.file != nil && w.size > 0 && w.config.RotateInterval > 0 && now.Sub(w.started) >= w.config.RotateInterval {
 			err = errors.Join(err, w.rotateLocked(now))
 		}
 		err = errors.Join(err, w.cleanupLocked(now))
+		interval = w.config.RotateCheckInterval
+		onError := w.config.OnError
 		w.mu.Unlock()
+		ticker.Reset(interval)
 		if err != nil {
-			w.options.OnError(err)
+			onError(err)
 		}
 	}
 }

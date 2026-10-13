@@ -25,4 +25,4 @@ whtlib/
 
 ## 日志组件
 
-[logx 使用说明](extension/logx/README.md)：基于标准库 slog，支持 ctx 字段、Skip、自定义 Writer 和内置文件轮转。分割阈值与保留时间可配置，归档默认保留 24h。
+[logx 使用说明](extension/logx/README.md)：基于标准库 slog，支持 ctx 字段、Skip、SetConfig、全局单例、自定义 Writer 和内置文件轮转。分割阈值与保留时间可配置，归档默认保留 24h。

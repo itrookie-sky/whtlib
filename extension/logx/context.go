@@ -44,8 +44,8 @@ func encodeFields(fields []jsonField) (data []byte, err error) {
 	return
 }
 
-func contextJSON(ctx context.Context, options Options) (data []byte, err error) {
-	fields := make([]jsonField, 0, 1+len(options.ContextFields))
+func contextJSON(ctx context.Context, config Config) (data []byte, err error) {
+	fields := make([]jsonField, 0, 1+len(config.ContextFields))
 	add := func(name string, key any) {
 		value := ctx.Value(key)
 		if isNil(value) {
@@ -57,8 +57,8 @@ func contextJSON(ctx context.Context, options Options) (data []byte, err error) 
 		}
 		fields = append(fields, jsonField{name: name, value: value})
 	}
-	add("traceId", options.TraceKey)
-	for _, field := range options.ContextFields {
+	add("traceId", config.TraceKey)
+	for _, field := range config.ContextFields {
 		add(field.Name, field.Key)
 	}
 	return encodeFields(fields)

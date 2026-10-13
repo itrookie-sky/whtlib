@@ -37,12 +37,12 @@ JSON 对象语义上无顺序，但本模块保证顶层 context 成员的输出
 
 ## Logger 配置和接口
 
-New 接收 Options，返回 Logger 和初始化错误。构造时复制字段切片并校验配置，之后保持只读；动态级别可使用 slog.LevelVar。
+New 接收 Config，返回 Logger 和初始化错误。构造时复制字段切片并校验配置，每版配置保持只读，通过 SetConfig 同步切换；动态级别也可使用 slog.LevelVar。
 
 | 配置项 | 默认值 | 含义 |
 | --- | --- | --- |
 | Writer | nil | 接收 io.Writer；非 nil 使用外部 Writer，nil 创建内置 FileWriter，typed nil 返回错误。 |
-| File | 默认文件配置 | FileOptions，仅未传 Writer 时使用。 |
+| File | 默认文件配置 | FileConfig，仅未传 Writer 时使用。 |
 | Level | slog.LevelInfo | 接收 slog.Leveler，过滤低于阈值的日志。 |
 | TraceKey | 字符串 traceId | 从 ctx 读取 traceId 的 key，输出名称固定为 traceId。 |
 | ContextFields | 空切片 | 每项包含输出名称 Name 与读取键 Key，按切片顺序输出。 |
@@ -56,6 +56,8 @@ context key 支持可比较的自定义类型。TraceKey 未设置时使用默�
 | Debug、Info、Warn、Error | 接收 ctx、消息及可变结构化属性，无返回值。 |
 | Log | 接收 ctx、slog.Level、消息及结构化属性，无返回值。 |
 | Debugf、Infof、Warnf、Errorf | 接收 ctx、格式串及参数，以 fmt.Sprintf 生成正文，无返回值。 |
+| SetConfig | 合并非零字段，更新当前实例并返回原指针，失败打印堆栈。 |
+| Default（包级） | 返回延迟初始化的全局 Logger，包级打印函数代理此实例。 |
 | Skip(n) | 返回额外跳过 n 层调用的派生 Logger。 |
 | Close | 关闭共享实例体系，仅释放 Logger 自己创建的内置 Writer。 |
 
@@ -66,6 +68,16 @@ context key 支持可比较的自定义类型。TraceKey 未设置时使用默�
 logx 先调用 Handler.Enabled，过滤后的日志不提取字段、不解析栈、不格式化正文。使用 slog.NewRecord 构造 Record，再调用 Handler.Handle。公开打印方法和内部 output 均无返回值。output 遇到编码、写入或关闭状态错误时，直接向 os.Stderr 输出错误及 runtime/debug.Stack 提供的当前调用堆栈，不经故障 Writer 或 logger 递归记录；构造、Close 和 FileWriter 方法仍保留错误返回。
 
 Handler 完整实现 Enabled、Handle、WithAttrs、WithGroup，遵循值解析、空属性、空组和嵌套分组约定。派生 Handler 共享输出锁，属性配置只读。Record 时间或 PC 为零时，分别省略时间或源码位置。
+
+## 动态配置和全局单例
+
+Config 替代原 Options，FileConfig 替代 FileOptions，默认配置工具相应改为 BuildDefaultConfig 与 DefaultFileConfig。SetConfig 的 nil、空字符串、0、false 表示沿用旧值；File 逐字段合并，非 nil 的 ContextFields 整体替换，空切片清空。零值重置需要创建新实例，不能通过 nil Writer 从外部 Writer 切回内置输出。
+
+Logger 和 Skip 派生实例共享 loggerCore。配置更新、关闭互相串行，与正在打印的记录同步；每条记录看到一份完整配置。验证和新资源初始化失败保留旧配置；成功切换后在配置锁外关闭旧自有 Writer，关闭失败打印堆栈但不回退已生效的配置。外部 Writer 永远由调用方关闭。同路径更新原 FileWriter 的轮转策略和维护周期，不创建第二个 Writer。
+
+Default 返回包内固定单例，导入包不触发文件系统操作。第一次打印或设置配置才初始化；初始化失败输出堆栈，后续调用允许重试。包级 SetConfig、Close、Skip 以及全部打印方法代理同一单例，不修改 slog 全局状态。包级打印入口直接进入 output，保持 Skip 和源码位置语义。关闭单例不会自动重建。
+
+输出持有配置读锁；调用方的 Writer、字段格式化函数和 OnError 回调中不得重入当前 Logger 的 SetConfig/Close，避免锁重入或等待维护任务自身退出。
 
 ## 上下文字段
 
@@ -93,7 +105,7 @@ FileWriter 可通过 NewFileWriter 独立创建，实现 io.WriteCloser，另提
 
 ## 文件配置与默认值
 
-所有分割阈值、轮转周期、保留时长和清理周期均可传入。提供 DefaultFileOptions 返回完整默认值，零值按下表处理。
+所有分割阈值、轮转周期、保留时长和清理周期均可传入。提供 DefaultFileConfig 返回完整默认值，零值按下表处理。
 
 | 字段 | 类型 | 默认值 | 语义 |
 | --- | --- | --- | --- |
@@ -128,7 +140,7 @@ Write、Rotate、Cleanup、后台维护和 Close 使用统一同步状态。首�
 
 先按归档时间删除过期文件，再按 RotateBackupLimit 从旧到新删除多余归档。活动文件不计入数量。历史归档清理不依赖当前是否启用轮转。
 
-清理失败不回滚成功的写入或轮转。后台错误交给 OnError，回调在文件锁外执行，不通过当前 logger 递归记录，也不允许在维护任务回调内调用 Close 等待自身退出。手动 Cleanup 直接返回错误。
+清理失败不回滚成功的写入或轮转。后台错误交给 OnError，回调在文件锁外执行，不通过当前 logger 递归记录，也不允许在维护任务回调内调用 Close 或 SetConfig 等待自身退出。手动 Cleanup 直接返回错误。
 
 进程停止期间不执行维护，下次初始化补做清理。Close 停止 ticker 并等待 goroutine 退出，避免资源泄漏。
 
@@ -145,7 +157,9 @@ Write、Rotate、Cleanup、后台维护和 Close 使用统一同步状态。首�
 ```text
 extension/logx/
 ├── logx.go          # Logger 入口、Record、派生实例和关闭
-├── options.go       # Logger 配置与校验
+├── config.go        # Logger 配置、合并与校验
+├── instance.go      # 共享状态、配置切换与资源释放
+├── default.go       # 全局单例和包级打印入口
 ├── handler.go       # slog.Handler 与固定输出格式
 ├── context.go       # ctx 提取与有序 JSON
 ├── caller.go        # 调用位置解析
@@ -173,5 +187,9 @@ extension/logx/
 | 并发写入、轮转、清理和关闭 | 记录不交错，不访问已关闭句柄，派生实例共享关闭状态。 |
 | 写入、后台维护或短写错误 | output 将同步错误及堆栈写入 stderr；直接调用 FileWriter 仍返回错误，后台错误调用 OnError，不递归记录。 |
 | 重复 Close | 资源已释放，调用安全。 |
+| SetConfig | 返回原实例，未填字段保留，失败保留旧配置，派生实例同步生效。 |
+| 同路径修改轮转参数 | 复用原文件 Writer，新的分割和检查周期生效。 |
+| 全局单例和包级打印 | 延迟初始化、相同实例、业务调用行号正确。 |
+| SetConfig 与打印和 Close 并发 | 无数据竞争、无混合配置、无重复维护资源。 |
 
 用户已授权添加并运行模块测试。实现验证覆盖模块构建、静态检查及 race 测试；测试范围包括上下文顺序、调用位置、轮转与清理、后台错误和并发关闭。

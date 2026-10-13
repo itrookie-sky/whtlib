@@ -15,12 +15,10 @@ import (
 )
 
 type outputState struct {
-	mu       sync.Mutex
-	writer   io.Writer
-	owned    *FileWriter
-	closed   bool
-	close    sync.Once
-	closeErr error
+	mu     sync.Mutex
+	writer io.Writer
+	owned  *FileWriter
+	closed bool
 }
 
 type boundAttrs struct {
@@ -29,14 +27,14 @@ type boundAttrs struct {
 }
 
 type handler struct {
-	state   *outputState
-	options Options
-	groups  []string
-	bound   []boundAttrs
+	state  *outputState
+	config Config
+	groups []string
+	bound  []boundAttrs
 }
 
 func (h *handler) Enabled(_ context.Context, level slog.Level) (enabled bool) {
-	return level >= h.options.Level.Level()
+	return level >= h.config.Level.Level()
 }
 
 func (h *handler) WithAttrs(attrs []slog.Attr) (result slog.Handler) {
@@ -103,7 +101,7 @@ func appendGrouped(fields []jsonField, groups []string, values []jsonField) (res
 var lineEscaper = strings.NewReplacer("\r", `\r`, "\n", `\n`)
 
 func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
-	contextData, err := contextJSON(ctx, h.options)
+	contextData, err := contextJSON(ctx, h.config)
 	var line strings.Builder
 	if !record.Time.IsZero() {
 		line.WriteString(record.Time.Local().Format("2006/01/02 15:04:05"))
@@ -115,7 +113,7 @@ func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 		frame, _ := frames.Next()
 		if frame.File != "" {
 			file := frame.File
-			if !h.options.FullPath {
+			if !h.config.FullPath {
 				file = filepath.Join(filepath.Base(filepath.Dir(file)), filepath.Base(file))
 			}
 			line.WriteByte(' ')

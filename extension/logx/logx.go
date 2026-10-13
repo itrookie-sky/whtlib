@@ -12,31 +12,36 @@ import (
 // Logger 提供必须传入 ctx 的日志方法，派生实例共享输出与关闭状态。
 // 打印方法不返回错误，编码和写入错误连同调用堆栈直接输出到 stderr。
 type Logger struct {
-	handler *handler
-	skip    int
+	core *loggerCore
+	skip int
 }
 
 // New 创建日志实例，未指定 Writer 时创建内置文件 Writer。
-func New(options Options) (logger *Logger, err error) {
-	options, err = BuildDefaultOptions(options)
+func New(config Config) (logger *Logger, err error) {
+	logger = &Logger{core: &loggerCore{config: config}}
+	err = logger.core.initialize()
 	if err != nil {
-		return
+		return nil, err
 	}
-	state := &outputState{writer: options.Writer}
-	if state.writer == nil {
-		state.owned, err = NewFileWriter(options.File)
-		if err != nil {
-			return
-		}
-		state.writer = state.owned
-	}
-	logger = &Logger{handler: &handler{state: state, options: options}, skip: options.Skip}
 	return
+}
+
+// SetConfig 将非零配置项更新到当前实例，未填写项沿用旧值，返回原实例。
+// 更新失败时保留旧配置，并向 stderr 输出错误和调用堆栈。
+func (l *Logger) SetConfig(config Config) (logger *Logger) {
+	err := l.core.setConfig(config)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "logx: %v\n%s", err, debug.Stack())
+	}
+	return l
 }
 
 // Skip 返回额外跳过 n 层业务调用的实例，不改变原实例。
 func (l *Logger) Skip(n int) (logger *Logger) {
-	if n < 0 || n > int(^uint(0)>>1)-l.skip {
+	l.core.mu.RLock()
+	baseSkip := l.core.config.Skip
+	l.core.mu.RUnlock()
+	if n < 0 || n > int(^uint(0)>>1)-l.skip || baseSkip > int(^uint(0)>>1)-l.skip-n {
 		panic("logx: invalid skip")
 	}
 	clone := *l
@@ -46,33 +51,32 @@ func (l *Logger) Skip(n int) (logger *Logger) {
 
 // Close 关闭共享实例体系，不关闭调用方传入的 Writer。
 func (l *Logger) Close() (err error) {
-	state := l.handler.state
-	state.close.Do(func() {
-		state.mu.Lock()
-		state.closed = true
-		state.mu.Unlock()
-		if state.owned != nil {
-			state.closeErr = state.owned.Close()
-		}
-	})
-	return state.closeErr
+	return l.core.close()
 }
 
 func (l *Logger) output(ctx context.Context, level slog.Level, message string, args []any, formatted bool) {
 	if isNil(ctx) {
 		panic("logx: nil context")
 	}
-	l.handler.state.mu.Lock()
-	closed := l.handler.state.closed
-	l.handler.state.mu.Unlock()
-	if closed {
+	err := l.core.initialize()
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "logx: %v\n%s", err, debug.Stack())
+		return
+	}
+	l.core.mu.RLock()
+	defer l.core.mu.RUnlock()
+	if l.core.closed {
 		_, _ = fmt.Fprintf(os.Stderr, "logx: %v\n%s", os.ErrClosed, debug.Stack())
 		return
 	}
-	if !l.handler.Enabled(ctx, level) {
+	h := l.core.handler
+	if !h.Enabled(ctx, level) {
 		return
 	}
-	pc := callerPC(l.skip)
+	var pc uintptr
+	if l.skip <= int(^uint(0)>>1)-l.core.config.Skip {
+		pc = callerPC(l.skip + l.core.config.Skip)
+	}
 	if formatted {
 		message = fmt.Sprintf(message, args...)
 	}
@@ -80,7 +84,7 @@ func (l *Logger) output(ctx context.Context, level slog.Level, message string, a
 	if !formatted {
 		record.Add(args...)
 	}
-	err := l.handler.Handle(ctx, record)
+	err = h.Handle(ctx, record)
 	if err != nil {
 		// 直接写 stderr，避免故障 Writer 导致递归记录。
 		_, _ = fmt.Fprintf(os.Stderr, "logx: %v\n%s", err, debug.Stack())

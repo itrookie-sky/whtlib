@@ -21,7 +21,7 @@ type archive struct {
 }
 
 func (w *FileWriter) archivePath(now time.Time) (path string, err error) {
-	prefix := strings.TrimSuffix(w.options.File, ".log")
+	prefix := strings.TrimSuffix(w.config.File, ".log")
 	for range 10 {
 		var id [8]byte
 		_, err = rand.Read(id[:])
@@ -29,7 +29,7 @@ func (w *FileWriter) archivePath(now time.Time) (path string, err error) {
 			return
 		}
 		name := prefix + "." + now.UTC().Format(archiveTimeFormat) + "." + hex.EncodeToString(id[:]) + ".log"
-		path = filepath.Join(w.options.Path, name)
+		path = filepath.Join(w.config.Path, name)
 		_, statErr := os.Lstat(path)
 		if errors.Is(statErr, os.ErrNotExist) {
 			return path, nil
@@ -58,7 +58,7 @@ func (w *FileWriter) rotateLocked(now time.Time) (err error) {
 	if err != nil {
 		return errors.Join(err, w.openLocked(now))
 	}
-	err = os.Rename(filepath.Join(w.options.Path, w.options.File), archivePath)
+	err = os.Rename(filepath.Join(w.config.Path, w.config.File), archivePath)
 	if err != nil {
 		return errors.Join(err, w.openLocked(now))
 	}
@@ -82,7 +82,7 @@ func (w *FileWriter) Rotate() (err error) {
 }
 
 func (w *FileWriter) parseArchive(name string) (created time.Time, ok bool) {
-	prefix := strings.TrimSuffix(w.options.File, ".log") + "."
+	prefix := strings.TrimSuffix(w.config.File, ".log") + "."
 	rest, found := strings.CutPrefix(name, prefix)
 	if !found {
 		return
@@ -101,7 +101,7 @@ func (w *FileWriter) parseArchive(name string) (created time.Time, ok bool) {
 }
 
 func (w *FileWriter) cleanupLocked(now time.Time) (err error) {
-	entries, err := os.ReadDir(w.options.Path)
+	entries, err := os.ReadDir(w.config.Path)
 	if err != nil {
 		return
 	}
@@ -129,12 +129,12 @@ func (w *FileWriter) cleanupLocked(now time.Time) (err error) {
 	})
 	remaining := len(archives)
 	for _, item := range archives {
-		expired := w.options.RotateBackupExpire > 0 && now.Sub(item.time) >= w.options.RotateBackupExpire
-		excess := w.options.RotateBackupLimit > 0 && remaining > w.options.RotateBackupLimit
+		expired := w.config.RotateBackupExpire > 0 && now.Sub(item.time) >= w.config.RotateBackupExpire
+		excess := w.config.RotateBackupLimit > 0 && remaining > w.config.RotateBackupLimit
 		if !expired && !excess {
 			continue
 		}
-		removeErr := os.Remove(filepath.Join(w.options.Path, item.name))
+		removeErr := os.Remove(filepath.Join(w.config.Path, item.name))
 		if removeErr == nil || errors.Is(removeErr, os.ErrNotExist) {
 			remaining--
 			continue
