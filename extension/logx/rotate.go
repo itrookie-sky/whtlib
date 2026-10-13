@@ -20,7 +20,7 @@ type archive struct {
 	time time.Time
 }
 
-func (w *FileWriter) archivePath(now time.Time) (path string, err error) {
+func (w *fileWriter) archivePath(now time.Time) (path string, err error) {
 	prefix := strings.TrimSuffix(w.config.File, ".log")
 	for range 10 {
 		var id [8]byte
@@ -41,7 +41,7 @@ func (w *FileWriter) archivePath(now time.Time) (path string, err error) {
 	return "", fmt.Errorf("logx: unable to allocate archive name")
 }
 
-func (w *FileWriter) rotateLocked(now time.Time) (err error) {
+func (w *fileWriter) rotateLocked(now time.Time) (err error) {
 	if w.file == nil {
 		return w.openLocked(now)
 	}
@@ -67,7 +67,7 @@ func (w *FileWriter) rotateLocked(now time.Time) (err error) {
 }
 
 // Rotate 手动轮转非空活动文件，并清理历史归档。
-func (w *FileWriter) Rotate() (err error) {
+func (w *fileWriter) Rotate() (err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -81,7 +81,7 @@ func (w *FileWriter) Rotate() (err error) {
 	return w.cleanupLocked(now)
 }
 
-func (w *FileWriter) parseArchive(name string) (created time.Time, ok bool) {
+func (w *fileWriter) parseArchive(name string) (created time.Time, ok bool) {
 	prefix := strings.TrimSuffix(w.config.File, ".log") + "."
 	rest, found := strings.CutPrefix(name, prefix)
 	if !found {
@@ -100,7 +100,7 @@ func (w *FileWriter) parseArchive(name string) (created time.Time, ok bool) {
 	return created, err == nil
 }
 
-func (w *FileWriter) cleanupLocked(now time.Time) (err error) {
+func (w *fileWriter) cleanupLocked(now time.Time) (err error) {
 	entries, err := os.ReadDir(w.config.Path)
 	if err != nil {
 		return
@@ -145,7 +145,7 @@ func (w *FileWriter) cleanupLocked(now time.Time) (err error) {
 }
 
 // Cleanup 按保留时间和数量清理当前前缀的归档，不删除活动文件。
-func (w *FileWriter) Cleanup() (err error) {
+func (w *fileWriter) Cleanup() (err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {

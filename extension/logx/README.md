@@ -51,21 +51,21 @@ func main() {
 2026/10/13 14:30:00 {"traceId":"abc123","userId":1001} app/main.go:42 INFO 创建订单成功 {"orderId":"o123"}
 ```
 
-上下文 JSON 固定在日期后，traceId 第一，自定义字段按配置顺序排列。缺失字段省略，全缺失输出 `{}`。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记，其他日志内容仍尝试写入。所有打印方法及内部 output 均无返回值，编码和写入错误由 output 连同当前 goroutine 的调用堆栈直接写入 stderr，不经过配置的 Writer，避免递归；初始化、Close 及 FileWriter 的资源管理方法仍返回错误。
+上下文 JSON 固定在日期后，traceId 第一，自定义字段按配置顺序排列。缺失字段省略，全缺失输出 `{}`。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记，其他日志内容仍尝试写入。所有打印方法及内部 output 均无返回值，编码和写入错误由 output 连同当前 goroutine 的调用堆栈直接写入 stderr，不经过配置的 Writer，避免递归；初始化与 Close 仍返回错误。
 
-普通方法的可变参数为 slog 结构化属性；文本格式化使用 Infof 等方法。ctx 取消仍可记录日志，nil ctx 会 panic。默认 Info 级别，可通过 Config.Level 传入 slog.LevelVar 动态调整。
+普通方法的可变参数为 slog 结构化属性；文本格式化使用 Infof 等方法。ctx 取消仍可记录日志，nil ctx 会 panic。默认 Info 级别，Config.Level 在 New/SetConfig 时读取级别快照，之后通过 SetConfig 调整，外部 LevelVar 的变化不会传播到实例。
 
 ## 全局单例
 
 ```go
-logx.SetConfig(logx.Config{Writer: os.Stdout})
+logx.SetConfig(logx.Config{File: logx.FileConfig{Path: "./logs", File: "app.log"}})
 logx.Info(ctx, "创建订单成功", "orderId", "o123")
 logx.Default().Infof(ctx, "订单：%s", "o123")
 ```
 
 `Default()` 始终返回同一个实例。仅导入包或调用 Default 不创建文件；第一次打印或 SetConfig 才初始化输出资源。包级 Debug、Info、Warn、Error、Log 及带 f 的方法代理同一实例，并保持正确的业务调用行号。`logx.Skip(n)` 创建单例的派生实例，`logx.Close()` 关闭单例；关闭后不自动重建。
 
-单例属于 logx，不修改 `slog.Default()`。如需自定义输出，请在第一次打印之前调用 SetConfig，避免先初始化默认文件 Writer。
+单例属于 logx，不修改 `slog.Default()`。如需设置文件路径，请在第一次打印之前调用 SetConfig，避免先初始化默认文件。
 
 ## 修改当前实例配置
 
@@ -78,19 +78,21 @@ logger.SetConfig(logx.Config{
 
 SetConfig 返回原来的 `*Logger`，合并传入字段：nil、空字符串、0、false 均表示沿用旧值；File 内部字段也逐项合并。ContextFields 为 nil 时保留，非 nil 空切片清空列表，非空切片整体替换并复制。Level 是接口，显式传 `slog.LevelInfo` 可以恢复 Info 级别。
 
-因此，SetConfig 不能用零值重置 Skip、FullPath、RotateBackupLimit，也不能用 nil Writer 切回默认文件输出；需要这些重置行为时创建新实例。轮转的 -1 禁用值可正常传入。当前使用外部 Writer 时，更新 File 仅保存配置，不自动切换输出目标。
+因此，SetConfig 不能用零值重置 Skip、FullPath、RotateBackupLimit；需要这些重置行为时创建新实例。轮转的 -1 禁用值可正常传入。
 
-配置变更与打印、Close 同步；已有 Skip 派生实例也使用新配置，其额外 skip 不变。每条日志使用完整的一版配置。验证或新文件初始化失败时，输出错误和堆栈并保留旧配置；成功切换后关闭旧的自有 Writer，外部 Writer 不关闭。旧资源关闭失败时新配置已生效，仅输出诊断。
+配置变更与当前实例的打印、Close 同步，每条日志使用完整的一版配置。New 和 Skip 创建的实例各自持有独立的 loggerCore，SetConfig 和 Close 不影响其他实例。验证、新文件初始化或共享策略检查失败时，输出错误和堆栈并保留旧配置；成功切换后释放旧文件引用，旧资源关闭失败仅输出诊断。
 
-同一个文件的轮转策略更新复用原 FileWriter，并刷新后台检查间隔，避免同时创建两个管理同一文件的 Writer。不要在 Writer.Write、字段格式化或 OnError 回调中调用当前 logger 的 SetConfig/Close。
+## 私有全局文件管理器
 
-配置类型及构造工具统一命名为 `Config`、`FileConfig`、`BuildDefaultConfig` 和 `DefaultFileConfig`，替换原 Options 命名。
+Writer 封闭在包内部，不再提供 Config.Writer、FileWriter 或 NewFileWriter。通过 File.Path 和 File.File 配置输出目标。
 
-## 自定义 Writer
+所有实例共用一个私有文件管理器，同一规范化绝对路径共用一个文件句柄、写入锁、轮转计数及维护任务。不同文件分别管理，目录符号链接会解析到真实路径。活动文件符号链接不接受；不支持通过硬链接或其他文件系统别名指向同一文件。
 
-将 `Config.Writer` 设为 `os.Stdout`、`bytes.Buffer` 或其他 `io.Writer`。传入 Writer 后不会创建文件或启动清理任务，File 配置不生效，Logger.Close 不关闭外部 Writer。
+同一文件的轮转参数必须一致：New 遇到冲突返回错误；SetConfig 遇到冲突打印堆栈并保留旧配置。只有一个实例引用该文件时，允许修改其轮转参数。路径切换只影响当前实例，原文件继续供其他实例使用。
 
-FileWriter 也可独立通过 `logx.NewFileWriter(logx.FileConfig{...})` 创建，支持 Write、Rotate、Cleanup、Sync 和 Close。需要文件加终端双写时，使用 `io.MultiWriter(fileWriter, os.Stdout)`，并自行关闭 fileWriter。
+每个实例独立持有文件引用；Close 释放当前引用，最后一个引用释放后停止维护并关闭文件。关闭中的文件完成释放前，新实例会等待，不会同时打开第二个 Writer。共享限定在同一进程，多进程必须使用不同文件。
+
+OnError 按实例登记，共享文件的后台错误通知当前登记的各实例回调；修改回调不影响其他实例。回调可能已被本轮维护快照捕获。回调应快速返回，不应重入 logx API。字段格式化函数中也不要调用当前实例的 SetConfig/Close。
 
 ## 文件默认配置
 
@@ -109,12 +111,20 @@ FileWriter 也可独立通过 `logx.NewFileWriter(logx.FileConfig{...})` 创建�
 
 分割在写入前检查，单条日志不会跨文件；单条自身大于阈值时允许该文件超限。归档默认保留 24h，从归档产生时间计算，不是逐条日志的存活时间。过期清理存在检查周期延迟，程序停止时不运行，重启时补做。首版不提供压缩。
 
-只清理当前目录下精确匹配当前文件归档格式的普通文件，忽略活动文件、其他前缀、目录和符号链接。不能让多个进程或多个独立 FileWriter 操作同一个活动文件；同一进程可显式共享 FileWriter。
+只清理当前目录下精确匹配当前文件归档格式的普通文件，忽略活动文件、其他前缀、目录和符号链接。同一进程由全局文件管理器统一协调；不同进程不得操作同一个活动文件。
 
-后台错误通过 OnError 报告，回调内不要调用当前 Logger/FileWriter 的 Close 或 Logger.SetConfig，也不要用当前 logger 递归记录。普通写入不逐条 fsync，需要持久化检查点时调用 FileWriter.Sync。
+后台错误通过 OnError 报告，默认写入 stderr。普通写入不逐条 fsync，当前不对外提供 Writer 或 Sync 接口。
 
 ## 调用位置和关闭
 
-默认显示日志调用处的 `目录/文件:行号`，`FullPath: true` 输出完整路径。在业务日志封装内调用 `logger.Skip(1).Info(ctx, "消息")` 可以定位上层调用者。Skip 追加层数，派生实例不修改原实例；负数或溢出 panic，超出栈时省略位置。
+默认显示日志调用处的 `目录/文件:行号`，`FullPath: true` 输出完整路径。Skip 追加层数，复制当前配置快照并创建独立实例；负数或溢出 panic，超出栈时省略位置。关闭实例上调用 Skip 得到的实例同样处于关闭状态。
 
-所有派生实例共享关闭状态，任一实例 Close 后，所有实例不再写入配置的 Writer，打印调用会向 stderr 输出关闭错误及调用堆栈。FileWriter 关闭后的操作仍返回 os.ErrClosed。内部创建的 FileWriter 随 Logger 关闭；外部 Writer 始终由调用方管理。请在应用退出时调用 Close 停止维护任务。
+封装打印方法时，独立派生实例需要关闭，建议在封装组件初始化时创建并复用：
+
+```go
+wrapped := logger.Skip(1)
+defer wrapped.Close()
+// 在封装方法中调用 wrapped.Info(ctx, "消息")。
+```
+
+不要在高频打印中持续创建不关闭的 Skip 实例。关闭父实例不会关闭派生实例，反之亦然。每个实例都应在不再使用时 Close，应用退出时也应关闭全局单例。重复 Close 安全；关闭后打印向 stderr 输出关闭错误与堆栈。

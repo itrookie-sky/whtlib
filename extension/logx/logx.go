@@ -9,14 +9,14 @@ import (
 	"time"
 )
 
-// Logger 提供必须传入 ctx 的日志方法，派生实例共享输出与关闭状态。
+// Logger 提供必须传入 ctx 的日志方法，各实例独立保存配置与关闭状态。
 // 打印方法不返回错误，编码和写入错误连同调用堆栈直接输出到 stderr。
 type Logger struct {
 	core *loggerCore
 	skip int
 }
 
-// New 创建日志实例，未指定 Writer 时创建内置文件 Writer。
+// New 创建日志实例，通过全局私有管理器获取文件输出资源。
 func New(config Config) (logger *Logger, err error) {
 	logger = &Logger{core: &loggerCore{config: config}}
 	err = logger.core.initialize()
@@ -36,20 +36,27 @@ func (l *Logger) SetConfig(config Config) (logger *Logger) {
 	return l
 }
 
-// Skip 返回额外跳过 n 层业务调用的实例，不改变原实例。
+// Skip 返回额外跳过 n 层业务调用的独立实例，不改变原实例，调用方需单独 Close。
 func (l *Logger) Skip(n int) (logger *Logger) {
 	l.core.mu.RLock()
+	defer l.core.mu.RUnlock()
 	baseSkip := l.core.config.Skip
-	l.core.mu.RUnlock()
 	if n < 0 || n > int(^uint(0)>>1)-l.skip || baseSkip > int(^uint(0)>>1)-l.skip-n {
 		panic("logx: invalid skip")
 	}
-	clone := *l
-	clone.skip += n
-	return &clone
+	config, err := BuildDefaultConfig(l.core.config)
+	if err != nil {
+		panic(err)
+	}
+	clone := &Logger{core: &loggerCore{config: config, closed: l.core.closed}, skip: l.skip + n}
+	if l.core.handler != nil && !l.core.closed {
+		lease := sharedFiles.retain(l.core.handler.state.lease)
+		clone.core.handler = &handler{config: config, state: &outputState{writer: l.core.handler.state.writer, lease: lease}}
+	}
+	return clone
 }
 
-// Close 关闭共享实例体系，不关闭调用方传入的 Writer。
+// Close 仅关闭当前实例，最后一个引用释放时关闭对应文件。
 func (l *Logger) Close() (err error) {
 	return l.core.close()
 }

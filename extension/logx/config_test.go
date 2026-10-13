@@ -1,9 +1,8 @@
 package logx
 
 import (
-	"bytes"
 	"context"
-	"io"
+	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -11,133 +10,127 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
+func logContents(t *testing.T, path string) (contents string) {
+	t.Helper()
+	for _, data := range readLogFiles(t, path) {
+		contents += data
+	}
+	return
+}
+
 func TestSetConfigRetainsValuesAndIdentity(t *testing.T) {
-	var buffer bytes.Buffer
-	logger := newTestLogger(t, Config{
-		Writer: &buffer, TraceKey: testKey(1),
-		ContextFields: []ContextField{{Name: "userId", Key: testKey(2)}},
-	})
-	derived := logger.Skip(0)
+	path := t.TempDir()
+	logger := newTestLogger(t, Config{File: FileConfig{Path: path}, TraceKey: testKey(1), ContextFields: []ContextField{{Name: "userId", Key: testKey(2)}}})
+	derived := testSkip(t, logger, 0)
 	if logger.SetConfig(Config{Level: slog.LevelDebug}) != logger {
-		t.Fatal("SetConfig returned a different instance")
+		t.Fatal("identity changed")
 	}
 	ctx := context.WithValue(t.Context(), testKey(1), "trace")
 	ctx = context.WithValue(ctx, testKey(2), 42)
-	derived.Debug(ctx, "updated")
-	if !strings.Contains(buffer.String(), `{"traceId":"trace","userId":42}`) || !strings.Contains(buffer.String(), "DEBUG updated") {
-		t.Fatalf("omitted config lost or derived instance stale: %s", buffer.String())
-	}
-	buffer.Reset()
+	derived.Debug(ctx, "filtered")
 	logger.SetConfig(Config{}).Debug(ctx, "retained")
-	if !strings.Contains(buffer.String(), `"userId":42`) {
-		t.Fatal("empty config reset fields")
+	output := logContents(t, path)
+	if strings.Contains(output, "filtered") || !strings.Contains(output, `{"traceId":"trace","userId":42}`) {
+		t.Fatal(output)
 	}
-	buffer.Reset()
 	logger.SetConfig(Config{ContextFields: []ContextField{}}).Info(ctx, "cleared")
-	if !strings.Contains(buffer.String(), `{"traceId":"trace"}`) || strings.Contains(buffer.String(), "userId") {
-		t.Fatalf("explicit empty fields not cleared: %s", buffer.String())
+	derived.Info(ctx, "unchanged")
+	output = logContents(t, path)
+	if !strings.Contains(output, `{"traceId":"trace"}`) || !strings.Contains(output, "INFO unchanged") {
+		t.Fatal(output)
 	}
-	fields := []ContextField{{Name: "userId", Key: testKey(2)}}
+	fields := []ContextField{{Name: "other", Key: testKey(2)}}
 	logger.SetConfig(Config{ContextFields: fields})
 	fields[0].Name = "mutated"
-	buffer.Reset()
 	logger.Info(ctx, "copied")
-	if strings.Contains(buffer.String(), "mutated") {
-		t.Fatal("config fields not copied")
+	if strings.Contains(logContents(t, path), "mutated") {
+		t.Fatal("slice alias")
 	}
 }
 
 func TestSetConfigFailureKeepsPrevious(t *testing.T) {
-	var buffer bytes.Buffer
-	logger := newTestLogger(t, Config{Writer: &buffer})
-	diagnostic := captureStderr(t, func() {
-		if logger.SetConfig(Config{TraceKey: []string{"invalid"}}) != logger {
-			t.Fatal("failure changed identity")
-		}
-	})
-	if !strings.Contains(diagnostic, "invalid trace key") || !strings.Contains(diagnostic, "goroutine ") {
-		t.Fatalf("missing config error diagnostic: %s", diagnostic)
-	}
-	logger.Info(t.Context(), "still usable")
-	if !strings.Contains(buffer.String(), "still usable") {
-		t.Fatal("previous writer lost")
-	}
 	path := t.TempDir()
-	fileLogger := newTestLogger(t, Config{File: FileConfig{Path: path}})
-	oldHandler := fileLogger.core.handler
-	blocked := filepath.Join(path, "not-a-directory")
+	logger := newTestLogger(t, Config{File: FileConfig{Path: path}})
+	old := logger.core.handler
+	blocked := filepath.Join(path, "blocked")
 	err := os.WriteFile(blocked, []byte("occupied"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	diagnostic = captureStderr(t, func() { fileLogger.SetConfig(Config{File: FileConfig{Path: blocked}}) })
-	if diagnostic == "" || fileLogger.core.handler != oldHandler {
-		t.Fatal("failed file initialization replaced active config")
+	for _, config := range []Config{{TraceKey: []string{"invalid"}}, {File: FileConfig{Path: blocked}}} {
+		diagnostic := captureStderr(t, func() { logger.SetConfig(config) })
+		if diagnostic == "" || logger.core.handler != old {
+			t.Fatal("failed update changed state")
+		}
 	}
-	fileLogger.Info(t.Context(), "old file")
-	if !strings.Contains(readLogFiles(t, path)["app.log"], "old file") {
-		t.Fatal("old file no longer usable")
-	}
-}
-
-func TestSetConfigWriterSwitchAndClose(t *testing.T) {
-	oldPath := t.TempDir()
-	newPath := t.TempDir()
-	logger := newTestLogger(t, Config{File: FileConfig{Path: oldPath}})
-	oldWriter := logger.core.handler.state.owned
-	logger.Info(t.Context(), "old")
-	logger.SetConfig(Config{File: FileConfig{Path: newPath}}).Info(t.Context(), "new")
-	select {
-	case <-oldWriter.done:
-	default:
-		t.Fatal("retired maintenance did not stop")
-	}
-	if !strings.Contains(readLogFiles(t, oldPath)["app.log"], "INFO old") || !strings.Contains(readLogFiles(t, newPath)["app.log"], "INFO new") {
-		t.Fatal("file switch lost records")
-	}
-	owned := logger.core.handler.state.owned
-	var first, second closingBuffer
-	logger.SetConfig(Config{Writer: &first}).Info(t.Context(), "external one")
-	select {
-	case <-owned.done:
-	default:
-		t.Fatal("owned writer not closed when replaced")
-	}
-	logger.SetConfig(Config{Writer: &second}).Info(t.Context(), "external two")
-	if first.closed || second.closed || !strings.Contains(first.String(), "external one") || !strings.Contains(second.String(), "external two") {
-		t.Fatal("external writer ownership or routing changed")
-	}
-	_ = logger.Close()
-	diagnostic := captureStderr(t, func() { logger.SetConfig(Config{Writer: io.Discard}) })
-	if !strings.Contains(diagnostic, os.ErrClosed.Error()) || second.closed {
-		t.Fatal("closed logger reopened or external writer closed")
+	logger.Info(t.Context(), "still usable")
+	if !strings.Contains(logContents(t, path), "still usable") {
+		t.Fatal("lost previous file")
 	}
 }
 
-func TestSetConfigUpdatesSameFileStrategy(t *testing.T) {
+func TestSharedFileIsolationAndRelease(t *testing.T) {
 	path := t.TempDir()
-	logger := newTestLogger(t, Config{File: FileConfig{
-		Path: path, RotateSize: 1 << 20, RotateInterval: -1, RotateCheckInterval: time.Hour,
-	}})
-	writer := logger.core.handler.state.owned
-	logger.Info(t.Context(), "before")
-	logger.SetConfig(Config{File: FileConfig{RotateSize: 1, RotateBackupExpire: time.Hour}})
-	if logger.core.handler.state.owned != writer {
-		t.Fatal("same path opened a second writer")
+	config := Config{File: FileConfig{Path: path}}
+	a := newTestLogger(t, config)
+	b := newTestLogger(t, config)
+	c := testSkip(t, a, 0)
+	writer := a.core.handler.state.lease.entry.writer
+	if a.core == b.core || a.core == c.core || b.core.handler.state.lease.entry.writer != writer {
+		t.Fatal("incorrect sharing boundary")
 	}
-	logger.Info(t.Context(), "after")
-	if len(readLogFiles(t, path)) != 2 {
-		t.Fatal("updated size threshold did not rotate")
+	a.SetConfig(Config{Level: slog.LevelError})
+	b.Info(t.Context(), "b before")
+	_ = a.Close()
+	b.Info(t.Context(), "b after")
+	c.Info(t.Context(), "c after")
+	_ = b.Close()
+	select {
+	case <-writer.done:
+		t.Fatal("closed too early")
+	default:
 	}
-	writer.mu.Lock()
-	config := writer.config
-	writer.mu.Unlock()
-	if config.Path != path || config.RotateInterval != -1 || config.RotateBackupExpire != time.Hour {
-		t.Fatalf("nested file config not merged: %#v", config)
+	_ = c.Close()
+	select {
+	case <-writer.done:
+	default:
+		t.Fatal("last reference did not close writer")
+	}
+	if strings.Count(logContents(t, path), "INFO") != 3 {
+		t.Fatal("close or config affected other instances")
+	}
+	reopened := newTestLogger(t, config)
+	reopened.Info(t.Context(), "reopened")
+	if !strings.Contains(logContents(t, path), "reopened") {
+		t.Fatal("could not reopen")
+	}
+}
+
+func TestSetConfigPathSwitchAndPolicy(t *testing.T) {
+	path := t.TempDir()
+	a := newTestLogger(t, Config{File: FileConfig{Path: path, RotateInterval: -1}})
+	b := newTestLogger(t, Config{File: FileConfig{Path: path, RotateInterval: -1}})
+	original := a.core.handler
+	diagnostic := captureStderr(t, func() { a.SetConfig(Config{File: FileConfig{RotateSize: 1}}) })
+	if !strings.Contains(diagnostic, "conflicting rotation policy") || a.core.handler != original {
+		t.Fatal("shared policy mutated")
+	}
+	_, err := New(Config{File: FileConfig{Path: path, RotateSize: 1}})
+	if err == nil {
+		t.Fatal("conflicting new instance accepted")
+	}
+	newPath := t.TempDir()
+	a.SetConfig(Config{File: FileConfig{Path: newPath, File: "other.log"}}).Info(t.Context(), "new path")
+	b.Info(t.Context(), "old path")
+	b.SetConfig(Config{File: FileConfig{RotateSize: 1, RotateBackupExpire: time.Hour}})
+	b.Info(t.Context(), "rotated")
+	if len(readLogFiles(t, path)) != 2 || !strings.Contains(readLogFiles(t, newPath)["other.log"], "new path") {
+		t.Fatal("path switch or exclusive policy update failed")
 	}
 }
 
@@ -153,76 +146,79 @@ func TestSetConfigRefreshesMaintenanceInterval(t *testing.T) {
 		}
 		time.Sleep(2 * time.Millisecond)
 	}
-	t.Fatal("maintenance interval did not update")
+	t.Fatal("maintenance not updated")
 }
 
-func TestSetConfigConcurrentPrinting(t *testing.T) {
-	var buffer bytes.Buffer
-	logger := newTestLogger(t, Config{Writer: &buffer})
+func TestSharedFileConcurrentRotation(t *testing.T) {
+	path := t.TempDir()
+	config := Config{File: FileConfig{Path: path, RotateSize: 512, RotateInterval: -1}}
 	var wg sync.WaitGroup
-	for range 4 {
+	for i := range 8 {
 		wg.Go(func() {
-			for range 100 {
-				logger.Info(t.Context(), "concurrent")
+			logger, err := New(config)
+			if err != nil {
+				t.Error(err)
+				return
 			}
-		})
-	}
-	for range 2 {
-		wg.Go(func() {
-			for range 30 {
-				logger.SetConfig(Config{Level: slog.LevelDebug})
+			defer logger.Close()
+			for j := range 50 {
+				logger.Infof(t.Context(), "record-%d-%d", i, j)
 			}
+			logger.SetConfig(Config{Level: slog.LevelDebug})
 		})
 	}
 	wg.Wait()
-	if strings.Count(buffer.String(), "INFO concurrent\n") != 400 {
-		t.Fatal("reconfiguration lost or split records")
+	output := logContents(t, path)
+	if strings.Count(output, "\n") != 400 {
+		t.Fatal("lost or split records")
+	}
+	for i := range 8 {
+		for j := range 50 {
+			if strings.Count(output, "record-"+strconv.Itoa(i)+"-"+strconv.Itoa(j)+"\n") != 1 {
+				t.Fatal("record duplicated or missing")
+			}
+		}
 	}
 }
 
 func TestDefaultSingletonAndCallers(t *testing.T) {
-	// 本测试独占包级单例，结束后恢复，不与其他测试并行执行。
 	previous := defaultLogger
 	defaultLogger = &Logger{core: &loggerCore{}}
 	t.Cleanup(func() { _ = Close(); defaultLogger = previous })
 	if Default() != Default() || Default().core.handler != nil {
-		t.Fatal("default is not a lazy singleton")
+		t.Fatal("not lazy singleton")
 	}
-	var buffer bytes.Buffer
-	if SetConfig(Config{Writer: &buffer, Level: slog.LevelDebug}) != Default() {
-		t.Fatal("global config returned another logger")
+	path := t.TempDir()
+	if SetConfig(Config{File: FileConfig{Path: path}, Level: slog.LevelDebug}) != Default() {
+		t.Fatal("identity changed")
 	}
 	_, file, line, _ := runtime.Caller(0)
 	Info(t.Context(), "global")
-	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" INFO global") {
-		t.Fatalf("global wrapper moved caller: %s", buffer.String())
+	if !strings.Contains(logContents(t, path), filepath.Base(file)+":"+strconv.Itoa(line+1)+" INFO global") {
+		t.Fatal("wrong caller")
 	}
-	buffer.Reset()
-	_, _, line, _ = runtime.Caller(0)
-	Default().Info(t.Context(), "singleton")
-	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" INFO singleton") {
-		t.Fatalf("singleton caller incorrect: %s", buffer.String())
-	}
-	buffer.Reset()
 	for _, output := range []func(context.Context, string, ...any){Debug, Info, Warn, Error, Debugf, Infof, Warnf, Errorf} {
-		output(t.Context(), "global method")
+		output(t.Context(), "method")
 	}
-	Log(t.Context(), slog.LevelInfo, "custom level")
-	Skip(0).Info(t.Context(), "skip")
-	if strings.Count(buffer.String(), "\n") != 10 {
-		t.Fatal("missing global output wrapper")
+	Log(t.Context(), slog.LevelInfo, "custom")
+	derived := Skip(0)
+	defer derived.Close()
+	_ = Close()
+	derived.Info(t.Context(), "independent")
+	if strings.Count(logContents(t, path), "\n") != 11 {
+		t.Fatal("missing output")
 	}
 }
 
 func TestSetConfigConcurrentClose(t *testing.T) {
-	logger := newTestLogger(t, Config{Writer: io.Discard})
+	logger := newTestLogger(t, Config{})
 	captureStderr(t, func() {
 		var wg sync.WaitGroup
 		for range 4 {
 			wg.Go(func() {
 				for range 10 {
 					logger.SetConfig(Config{Level: slog.LevelDebug})
-					logger.Info(t.Context(), "concurrent close")
+					logger.Info(t.Context(), "concurrent")
 				}
 			})
 		}
@@ -237,6 +233,78 @@ func TestSetConfigConcurrentClose(t *testing.T) {
 		wg.Wait()
 	})
 	if !logger.core.closed {
-		t.Fatal("reconfiguration reopened closed instance")
+		t.Fatal("reopened closed logger")
+	}
+}
+
+func TestLevelSnapshotAndDirectoryAlias(t *testing.T) {
+	path := t.TempDir()
+	var level slog.LevelVar
+	a := newTestLogger(t, Config{File: FileConfig{Path: path}, Level: &level})
+	level.Set(slog.LevelError)
+	if a.core.config.Level.Level() != slog.LevelInfo {
+		t.Fatal("mutable level leaked")
+	}
+	alias := filepath.Join(t.TempDir(), "alias")
+	err := os.Symlink(path, alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := newTestLogger(t, Config{File: FileConfig{Path: alias}})
+	if a.core.handler.state.lease.entry != b.core.handler.state.lease.entry {
+		t.Fatal("directory alias opened duplicate writer")
+	}
+}
+
+func TestSharedCallbacksAndHardLink(t *testing.T) {
+	path := t.TempDir()
+	var first, second, updated atomic.Int32
+	a := newTestLogger(t, Config{File: FileConfig{Path: path, OnError: func(error) { first.Add(1) }}})
+	b := newTestLogger(t, Config{File: FileConfig{Path: path, OnError: func(error) { second.Add(1) }}})
+	a.SetConfig(Config{File: FileConfig{OnError: func(error) { updated.Add(1) }}})
+	sharedFiles.report(b.core.handler.state.lease.entry, errors.New("test maintenance"))
+	if first.Load() != 0 || second.Load() != 1 || updated.Load() != 1 {
+		t.Fatal("callbacks not isolated")
+	}
+	alias := filepath.Join(path, "alias.log")
+	err := os.Link(filepath.Join(path, "app.log"), alias)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = New(Config{File: FileConfig{Path: path, File: "alias.log"}})
+	if err == nil {
+		t.Fatal("hard link bypassed manager")
+	}
+}
+
+func TestConcurrentReopenAndRelease(t *testing.T) {
+	path := t.TempDir()
+	var wg sync.WaitGroup
+	for range 4 {
+		wg.Go(func() {
+			for range 40 {
+				logger, err := New(Config{File: FileConfig{Path: path}})
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				logger.Info(t.Context(), "reopen")
+				err = logger.Close()
+				if err != nil {
+					t.Error(err)
+					return
+				}
+			}
+		})
+	}
+	wg.Wait()
+	if strings.Count(logContents(t, path), "INFO reopen\n") != 160 {
+		t.Fatal("reopen lost records")
+	}
+	sharedFiles.mu.Lock()
+	remaining := len(sharedFiles.files)
+	sharedFiles.mu.Unlock()
+	if remaining != 0 {
+		t.Fatalf("leaked %d files", remaining)
 	}
 }

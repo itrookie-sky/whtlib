@@ -5,7 +5,7 @@ import (
 	"sync"
 )
 
-// loggerCore 在派生实例之间共享配置和生命周期。
+// loggerCore 保存单个实例私有的配置和生命周期。
 type loggerCore struct {
 	mu       sync.RWMutex
 	changeMu sync.Mutex
@@ -15,38 +15,29 @@ type loggerCore struct {
 	closeErr error
 }
 
-func buildHandler(config Config, previous *handler) (next *handler, resolved Config, retired *FileWriter, err error) {
+func buildHandler(config Config, previous *handler) (next *handler, resolved Config, retired *fileLease, err error) {
 	resolved, err = BuildDefaultConfig(config)
 	if err != nil {
 		return
 	}
-	state := &outputState{writer: resolved.Writer}
-	if resolved.Writer == nil {
-		resolved.File, err = normalizeFileConfig(resolved.File)
-		if err != nil {
-			return
-		}
-		if previous != nil && previous.state.owned != nil && previous.config.File.Path == resolved.File.Path && previous.config.File.File == resolved.File.File {
-			// 同一路径保留唯一的文件 Writer，只修改轮转策略。
-			err = previous.state.owned.reconfigure(resolved.File)
-			if err != nil {
-				return
-			}
-			state = previous.state
-		} else {
-			state.owned, err = NewFileWriter(resolved.File)
-			if err != nil {
-				return
-			}
-			state.writer = state.owned
-		}
+	var old *fileLease
+	if previous != nil {
+		old = previous.state.lease
 	}
+	lease, fileConfig, err := sharedFiles.acquire(resolved.File, old)
+	if err != nil {
+		return
+	}
+	resolved.File = fileConfig
+	state := &outputState{writer: lease.entry.writer, lease: lease}
 	next = &handler{state: state, config: resolved}
-	if previous != nil && previous.state != state {
+	if previous != nil {
 		previous.state.mu.Lock()
 		previous.state.closed = true
 		previous.state.mu.Unlock()
-		retired = previous.state.owned
+		if old != lease {
+			retired = old
+		}
 	}
 	return
 }
@@ -99,9 +90,9 @@ func (c *loggerCore) setConfig(update Config) (err error) {
 	if err != nil {
 		return
 	}
-	// 释放配置锁后再等待旧维护任务退出，允许错误回调执行普通打印。
+	// 释放配置锁后再等待旧维护任务退出，避免阻塞新配置的打印。
 	if retired != nil {
-		err = retired.Close()
+		err = sharedFiles.release(retired)
 	}
 	return
 }
@@ -115,16 +106,16 @@ func (c *loggerCore) close() (err error) {
 		return c.closeErr
 	}
 	c.closed = true
-	var owned *FileWriter
+	var lease *fileLease
 	if c.handler != nil {
 		c.handler.state.mu.Lock()
 		c.handler.state.closed = true
-		owned = c.handler.state.owned
+		lease = c.handler.state.lease
 		c.handler.state.mu.Unlock()
 	}
 	c.mu.Unlock()
-	if owned != nil {
-		c.closeErr = owned.Close()
+	if lease != nil {
+		c.closeErr = sharedFiles.release(lease)
 	}
 	return c.closeErr
 }

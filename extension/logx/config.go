@@ -3,7 +3,6 @@ package logx
 
 import (
 	"fmt"
-	"io"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -18,7 +17,6 @@ type ContextField struct {
 
 // Config 配置日志实例，零值使用默认文件输出和 Info 级别。
 type Config struct {
-	Writer        io.Writer
 	File          FileConfig
 	Level         slog.Leveler
 	TraceKey      any
@@ -51,14 +49,12 @@ func BuildDefaultConfig(config Config) (result Config, err error) {
 	if result.Skip < 0 {
 		return result, fmt.Errorf("logx: negative skip")
 	}
-	if result.Writer != nil && isNil(result.Writer) {
-		return result, fmt.Errorf("logx: nil writer")
-	}
 	if result.Level == nil {
 		result.Level = slog.LevelInfo
 	} else if isNil(result.Level) {
 		return result, fmt.Errorf("logx: nil level")
 	}
+	result.Level = result.Level.Level()
 	if result.TraceKey == nil {
 		result.TraceKey = "traceId"
 	}
@@ -79,9 +75,6 @@ func BuildDefaultConfig(config Config) (result Config, err error) {
 // mergeConfig 将显式非零字段合并到旧配置，nil 切片表示保留。
 func mergeConfig(previous Config, update Config) (result Config) {
 	result = previous
-	if update.Writer != nil {
-		result.Writer = update.Writer
-	}
 	if update.Level != nil {
 		result.Level = update.Level
 	}

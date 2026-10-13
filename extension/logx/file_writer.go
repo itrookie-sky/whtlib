@@ -20,15 +20,18 @@ type FileConfig struct {
 	RotateBackupExpire  time.Duration
 	RotateBackupLimit   int
 	RotateCheckInterval time.Duration
-	// OnError 接收后台维护错误，回调内不能关闭当前 Writer/Logger 或调用 Logger.SetConfig。
+	// OnError 接收后台维护错误，回调内不要重入 logx API。
 	OnError func(error)
 }
 
 // DefaultFileConfig 返回独立的默认配置，归档保留 24 小时。
 func DefaultFileConfig() (config FileConfig) {
 	return FileConfig{
-		Path: "./logs", File: "app.log", RotateSize: 100 * 1024 * 1024,
-		RotateInterval: 24 * time.Hour, RotateBackupExpire: 24 * time.Hour,
+		Path:                "./logs",
+		File:                "app.log",
+		RotateSize:          100 * 1024 * 1024,
+		RotateInterval:      24 * time.Hour,
+		RotateBackupExpire:  24 * time.Hour,
 		RotateCheckInterval: time.Minute,
 	}
 }
@@ -70,9 +73,9 @@ func normalizeFileConfig(config FileConfig) (result FileConfig, err error) {
 	return
 }
 
-// FileWriter 提供单进程内并发安全的日志写入、轮转和清理。
-// 同一活动文件只能由一个 FileWriter 管理。
-type FileWriter struct {
+// fileWriter 提供单进程内并发安全的日志写入、轮转和清理。
+// 同一活动文件只能由一个 fileWriter 管理。
+type fileWriter struct {
 	mu       sync.Mutex
 	config   FileConfig
 	file     *os.File
@@ -87,8 +90,8 @@ type FileWriter struct {
 	closeErr error
 }
 
-// NewFileWriter 创建文件 Writer 并启动后台维护，调用方需要 Close。
-func NewFileWriter(config FileConfig) (writer *FileWriter, err error) {
+// newFileWriter 创建文件 Writer 并启动后台维护，调用方需要 Close。
+func newFileWriter(config FileConfig) (writer *fileWriter, err error) {
 	config, err = normalizeFileConfig(config)
 	if err != nil {
 		return
@@ -97,7 +100,7 @@ func NewFileWriter(config FileConfig) (writer *FileWriter, err error) {
 	if err != nil {
 		return
 	}
-	writer = &FileWriter{config: config, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
+	writer = &fileWriter{config: config, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
 	err = writer.openLocked(time.Now())
 	if err != nil {
 		return nil, err
@@ -110,7 +113,7 @@ func NewFileWriter(config FileConfig) (writer *FileWriter, err error) {
 	return
 }
 
-func (w *FileWriter) openLocked(now time.Time) (err error) {
+func (w *fileWriter) openLocked(now time.Time) (err error) {
 	path := filepath.Join(w.config.Path, w.config.File)
 	info, statErr := os.Lstat(path)
 	if statErr == nil && !info.Mode().IsRegular() {
@@ -137,7 +140,7 @@ func (w *FileWriter) openLocked(now time.Time) (err error) {
 	return
 }
 
-func (w *FileWriter) notifyLocked(err error) {
+func (w *fileWriter) notifyLocked(err error) {
 	if err == nil {
 		return
 	}
@@ -150,7 +153,7 @@ func (w *FileWriter) notifyLocked(err error) {
 }
 
 // Write 写入一个完整记录，大小超限时在写入前轮转，不拆分 p。
-func (w *FileWriter) Write(p []byte) (n int, err error) {
+func (w *fileWriter) Write(p []byte) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -184,7 +187,7 @@ func (w *FileWriter) Write(p []byte) (n int, err error) {
 }
 
 // Sync 将活动文件数据提交到文件系统。
-func (w *FileWriter) Sync() (err error) {
+func (w *fileWriter) Sync() (err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -197,7 +200,7 @@ func (w *FileWriter) Sync() (err error) {
 }
 
 // Close 停止维护任务并关闭文件，重复调用返回相同结果。
-func (w *FileWriter) Close() (err error) {
+func (w *fileWriter) Close() (err error) {
 	w.close.Do(func() {
 		w.mu.Lock()
 		w.closed = true
@@ -217,7 +220,7 @@ func (w *FileWriter) Close() (err error) {
 }
 
 // reconfigure 仅用于同一路径的策略更新，调用方已完成校验。
-func (w *FileWriter) reconfigure(config FileConfig) (err error) {
+func (w *fileWriter) reconfigure(config FileConfig) (err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -231,7 +234,7 @@ func (w *FileWriter) reconfigure(config FileConfig) (err error) {
 	return
 }
 
-func (w *FileWriter) maintain() {
+func (w *fileWriter) maintain() {
 	w.mu.Lock()
 	interval := w.config.RotateCheckInterval
 	w.mu.Unlock()

@@ -17,7 +17,7 @@ import (
 type outputState struct {
 	mu     sync.Mutex
 	writer io.Writer
-	owned  *FileWriter
+	lease  *fileLease
 	closed bool
 }
 
