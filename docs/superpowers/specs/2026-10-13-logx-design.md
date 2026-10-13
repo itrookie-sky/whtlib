@@ -10,7 +10,7 @@
 业务调用 Logger（ctx 必传）
     → slog.Record（时间、级别、正文、业务属性、调用位置）
     → 自定义 slog.Handler（上下文提取与日志格式化）
-    → 全局 fileManager → 私有 fileWriter（按文件路径复用）
+    → 私有 terminalWriter（默认终端）或全局 fileManager → 私有 fileWriter（按文件路径复用）
 ```
 
 Logger 负责入口、级别判断和调用位置；Handler 负责格式与同步输出；私有 fileWriter 负责文件生命周期，不解析 ctx 或正文。不修改 slog 全局实例，不保存请求 ctx。首版不包含异步日志队列、进程退出接口或自动链路追踪集成。
@@ -41,6 +41,7 @@ New 接收 Config，返回 Logger 和初始化错误。构造时复制字段切�
 
 | 配置项 | 默认值 | 含义 |
 | --- | --- | --- |
+| WriteFile | false | bool；false 仅终端，true 仅文件；SetConfig 始终应用此值，未填写也视为 false。 |
 | File | 默认文件配置 | FileConfig，设置路径、文件名和轮转策略。 |
 | Level | slog.LevelInfo | 接收 slog.Leveler，过滤低于阈值的日志。 |
 | TraceKey | 字符串 traceId | 从 ctx 读取 traceId 的 key，输出名称固定为 traceId。 |
@@ -70,7 +71,7 @@ Handler 完整实现 Enabled、Handle、WithAttrs、WithGroup，遵循值解析�
 
 ## 动态配置和全局单例
 
-Config 替代原 Options，FileConfig 替代 FileOptions，默认配置工具相应改为 BuildDefaultConfig 与 DefaultFileConfig。SetConfig 的 nil、空字符串、0、false 表示沿用旧值；File 逐字段合并，非 nil 的 ContextFields 整体替换，空切片清空。零值重置需要创建新实例。
+Config 替代原 Options，FileConfig 替代 FileOptions，默认配置工具相应改为 BuildDefaultConfig 与 DefaultFileConfig。SetConfig 的 WriteFile 始终应用（默认 false），其他字段的 nil、空字符串、0、false 表示沿用旧值；File 逐字段合并，非 nil 的 ContextFields 整体替换，空切片清空。零值重置需要创建新实例。
 
 Logger 和 Skip 派生实例各自持有独立 loggerCore，配置切片复制、Level 读取为快照。SetConfig 和 Close 只作用于当前实例。文件通过私有全局 fileManager 按规范化绝对路径共享，目录符号链接解析到真实路径；硬链接别名不支持。相同文件的轮转策略必须一致，多实例持有时拒绝策略变更；只有一个引用时允许重新配置。路径切换先获取新资源，成功后释放旧引用，失败保留原配置。每个 Skip 实例必须独立 Close，最后一个引用释放后关闭文件。
 
@@ -98,7 +99,7 @@ nil、typed nil 和空字符串省略；0 与 false 保留，其余值按标准 
 
 公开 API 移除 Config.Writer、FileWriter、NewFileWriter。文件路径和名称通过 FileConfig 设置。所有实例共用一个 fileManager，同文件只持有一个 fileWriter；不同文件独立维护。
 
-每个 Logger 持有一个 fileLease。Skip 保留文件引用并复制配置，配置与关闭状态不共享。Close 仅释放当前引用，最后一个引用负责停止维护并关闭文件；关闭期间新的同路径申请等待释放完成，避免重复管理。全局单例也遵循相同规则。
+文件模式的 Logger 持有一个 fileLease；终端模式共用私有 terminalWriter，串行写入 os.Stdout，不创建文件资源。Skip 保留文件引用并复制配置，配置与关闭状态不共享。Close 仅释放当前引用，最后一个引用负责停止维护并关闭文件；关闭期间新的同路径申请等待释放完成，避免重复管理。全局单例也遵循相同规则。
 
 文件策略冲突时 New 返回错误，SetConfig 输出错误堆栈并保留旧配置。OnError 回调按实例登记，维护错误向当前登记的回调分别通知，更新回调不会影响其他实例；执行前取得快照，快照中的旧回调可能仍会执行。普通写入不逐条 fsync，暂不公开 Sync。
 

@@ -2,7 +2,18 @@
 
 基于标准库 `log/slog` 的日志扩展。所有日志调用必须传入 ctx，支持有序上下文 JSON、源码行号、Skip，以及可配置的文件轮转和归档清理。无第三方依赖。
 
-## 默认文件输出
+## 输出目标
+
+`WriteFile` 为 bool，默认 false：false 仅输出到终端（os.Stdout），不创建文件、目录或维护任务；true 仅写文件。SetConfig 始终应用 WriteFile，false 关闭文件输出；文件模式下更新其他配置也需显式传入 WriteFile: true。切换只影响当前实例，最后一个文件引用释放时才关闭文件。
+
+```go
+logger, err := logx.New(logx.Config{WriteFile: false})
+// 处理 err，结束时 logger.Close()。
+logger.SetConfig(logx.Config{WriteFile: true})
+logger.SetConfig(logx.Config{WriteFile: false})
+```
+
+## 文件输出示例
 
 ```go
 package main
@@ -21,6 +32,7 @@ func main() {
     const userKey contextKey = "userId"
 
     logger, err := logx.New(logx.Config{
+        WriteFile: true,
         TraceKey: traceKey,
         ContextFields: []logx.ContextField{
             {Name: "userId", Key: userKey},
@@ -58,25 +70,26 @@ func main() {
 ## 全局单例
 
 ```go
-logx.SetConfig(logx.Config{File: logx.FileConfig{Path: "./logs", File: "app.log"}})
+logx.SetConfig(logx.Config{WriteFile: true, File: logx.FileConfig{Path: "./logs", File: "app.log"}})
 logx.Info(ctx, "创建订单成功", "orderId", "o123")
 logx.Default().Infof(ctx, "订单：%s", "o123")
 ```
 
-`Default()` 始终返回同一个实例。仅导入包或调用 Default 不创建文件；第一次打印或 SetConfig 才初始化输出资源。包级 Debug、Info、Warn、Error、Log 及带 f 的方法代理同一实例，并保持正确的业务调用行号。`logx.Skip(n)` 创建单例的派生实例，`logx.Close()` 关闭单例；关闭后不自动重建。
+`Default()` 始终返回同一个实例。仅导入包或调用 Default 不创建文件；第一次打印或 SetConfig 才初始化输出资源，默认使用终端。包级 Debug、Info、Warn、Error、Log 及带 f 的方法代理同一实例，并保持正确的业务调用行号。`logx.Skip(n)` 创建单例的派生实例，`logx.Close()` 关闭单例；关闭后不自动重建。
 
 单例属于 logx，不修改 `slog.Default()`。如需设置文件路径，请在第一次打印之前调用 SetConfig，避免先初始化默认文件。
 
 ## 修改当前实例配置
 
 ```go
-logger.SetConfig(logx.Config{Level: slog.LevelDebug}).Debug(ctx, "启用调试")
+logger.SetConfig(logx.Config{WriteFile: true, Level: slog.LevelDebug}).Debug(ctx, "启用调试")
 logger.SetConfig(logx.Config{
+    WriteFile: true,
     File: logx.FileConfig{RotateSize: 20 * 1024 * 1024, RotateBackupExpire: 48 * time.Hour},
 })
 ```
 
-SetConfig 返回原来的 `*Logger`，合并传入字段：nil、空字符串、0、false 均表示沿用旧值；File 内部字段也逐项合并。ContextFields 为 nil 时保留，非 nil 空切片清空列表，非空切片整体替换并复制。Level 是接口，显式传 `slog.LevelInfo` 可以恢复 Info 级别。
+SetConfig 返回原来的 `*Logger`，WriteFile 始终生效（含默认 false）；其他字段合并规则：nil、空字符串、0、false 均表示沿用旧值；File 内部字段也逐项合并。ContextFields 为 nil 时保留，非 nil 空切片清空列表，非空切片整体替换并复制。Level 是接口，显式传 `slog.LevelInfo` 可以恢复 Info 级别。
 
 因此，SetConfig 不能用零值重置 Skip、FullPath、RotateBackupLimit；需要这些重置行为时创建新实例。轮转的 -1 禁用值可正常传入。
 
@@ -90,7 +103,7 @@ Writer 封闭在包内部，不再提供 Config.Writer、FileWriter 或 NewFileW
 
 同一文件的轮转参数必须一致：New 遇到冲突返回错误；SetConfig 遇到冲突打印堆栈并保留旧配置。只有一个实例引用该文件时，允许修改其轮转参数。路径切换只影响当前实例，原文件继续供其他实例使用。
 
-每个实例独立持有文件引用；Close 释放当前引用，最后一个引用释放后停止维护并关闭文件。关闭中的文件完成释放前，新实例会等待，不会同时打开第二个 Writer。共享限定在同一进程，多进程必须使用不同文件。
+启用文件输出的实例独立持有文件引用；Close 释放当前引用，最后一个引用释放后停止维护并关闭文件。关闭中的文件完成释放前，新实例会等待，不会同时打开第二个 Writer。共享限定在同一进程，多进程必须使用不同文件。
 
 OnError 按实例登记，共享文件的后台错误通知当前登记的各实例回调；修改回调不影响其他实例。回调可能已被本轮维护快照捕获。回调应快速返回，不应重入 logx API。字段格式化函数中也不要调用当前实例的 SetConfig/Close。
 

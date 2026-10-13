@@ -24,12 +24,18 @@ func buildHandler(config Config, previous *handler) (next *handler, resolved Con
 	if previous != nil {
 		old = previous.state.lease
 	}
-	lease, fileConfig, err := sharedFiles.acquire(resolved.File, old)
-	if err != nil {
-		return
+	state := &outputState{writer: terminalOutput}
+	var lease *fileLease
+	if resolved.WriteFile {
+		var fileConfig FileConfig
+		lease, fileConfig, err = sharedFiles.acquire(resolved.File, old)
+		if err != nil {
+			return
+		}
+		resolved.File = fileConfig
+		state.writer = lease.entry.writer
+		state.lease = lease
 	}
-	resolved.File = fileConfig
-	state := &outputState{writer: lease.entry.writer, lease: lease}
 	next = &handler{state: state, config: resolved}
 	if previous != nil {
 		previous.state.mu.Lock()

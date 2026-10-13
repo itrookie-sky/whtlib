@@ -20,6 +20,7 @@ type testKey int
 
 func newTestLogger(t *testing.T, config Config) (logger *Logger) {
 	t.Helper()
+	config.WriteFile = true
 	if config.File.Path == "" {
 		config.File.Path = t.TempDir()
 	}

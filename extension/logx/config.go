@@ -15,8 +15,10 @@ type ContextField struct {
 	Key  any
 }
 
-// Config 配置日志实例，零值使用默认文件输出和 Info 级别。
+// Config 配置日志实例，零值使用终端输出和 Info 级别。
 type Config struct {
+	// WriteFile 控制文件输出；默认 false；SetConfig 始终应用传入值。
+	WriteFile     bool
 	File          FileConfig
 	Level         slog.Leveler
 	TraceKey      any
@@ -75,6 +77,7 @@ func BuildDefaultConfig(config Config) (result Config, err error) {
 // mergeConfig 将显式非零字段合并到旧配置，nil 切片表示保留。
 func mergeConfig(previous Config, update Config) (result Config) {
 	result = previous
+	result.WriteFile = update.WriteFile
 	if update.Level != nil {
 		result.Level = update.Level
 	}

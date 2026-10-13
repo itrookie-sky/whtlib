@@ -25,27 +25,27 @@ func logContents(t *testing.T, path string) (contents string) {
 
 func TestSetConfigRetainsValuesAndIdentity(t *testing.T) {
 	path := t.TempDir()
-	logger := newTestLogger(t, Config{File: FileConfig{Path: path}, TraceKey: testKey(1), ContextFields: []ContextField{{Name: "userId", Key: testKey(2)}}})
+	logger := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path}, TraceKey: testKey(1), ContextFields: []ContextField{{Name: "userId", Key: testKey(2)}}})
 	derived := testSkip(t, logger, 0)
-	if logger.SetConfig(Config{Level: slog.LevelDebug}) != logger {
+	if logger.SetConfig(Config{WriteFile: true, Level: slog.LevelDebug}) != logger {
 		t.Fatal("identity changed")
 	}
 	ctx := context.WithValue(t.Context(), testKey(1), "trace")
 	ctx = context.WithValue(ctx, testKey(2), 42)
 	derived.Debug(ctx, "filtered")
-	logger.SetConfig(Config{}).Debug(ctx, "retained")
+	logger.SetConfig(Config{WriteFile: true}).Debug(ctx, "retained")
 	output := logContents(t, path)
 	if strings.Contains(output, "filtered") || !strings.Contains(output, `{"traceId":"trace","userId":42}`) {
 		t.Fatal(output)
 	}
-	logger.SetConfig(Config{ContextFields: []ContextField{}}).Info(ctx, "cleared")
+	logger.SetConfig(Config{WriteFile: true, ContextFields: []ContextField{}}).Info(ctx, "cleared")
 	derived.Info(ctx, "unchanged")
 	output = logContents(t, path)
 	if !strings.Contains(output, `{"traceId":"trace"}`) || !strings.Contains(output, "INFO unchanged") {
 		t.Fatal(output)
 	}
 	fields := []ContextField{{Name: "other", Key: testKey(2)}}
-	logger.SetConfig(Config{ContextFields: fields})
+	logger.SetConfig(Config{WriteFile: true, ContextFields: fields})
 	fields[0].Name = "mutated"
 	logger.Info(ctx, "copied")
 	if strings.Contains(logContents(t, path), "mutated") {
@@ -55,14 +55,14 @@ func TestSetConfigRetainsValuesAndIdentity(t *testing.T) {
 
 func TestSetConfigFailureKeepsPrevious(t *testing.T) {
 	path := t.TempDir()
-	logger := newTestLogger(t, Config{File: FileConfig{Path: path}})
+	logger := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path}})
 	old := logger.core.handler
 	blocked := filepath.Join(path, "blocked")
 	err := os.WriteFile(blocked, []byte("occupied"), 0o600)
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, config := range []Config{{TraceKey: []string{"invalid"}}, {File: FileConfig{Path: blocked}}} {
+	for _, config := range []Config{{TraceKey: []string{"invalid"}}, {WriteFile: true, File: FileConfig{Path: blocked}}} {
 		diagnostic := captureStderr(t, func() { logger.SetConfig(config) })
 		if diagnostic == "" || logger.core.handler != old {
 			t.Fatal("failed update changed state")
@@ -76,7 +76,7 @@ func TestSetConfigFailureKeepsPrevious(t *testing.T) {
 
 func TestSharedFileIsolationAndRelease(t *testing.T) {
 	path := t.TempDir()
-	config := Config{File: FileConfig{Path: path}}
+	config := Config{WriteFile: true, File: FileConfig{Path: path}}
 	a := newTestLogger(t, config)
 	b := newTestLogger(t, config)
 	c := testSkip(t, a, 0)
@@ -84,7 +84,7 @@ func TestSharedFileIsolationAndRelease(t *testing.T) {
 	if a.core == b.core || a.core == c.core || b.core.handler.state.lease.entry.writer != writer {
 		t.Fatal("incorrect sharing boundary")
 	}
-	a.SetConfig(Config{Level: slog.LevelError})
+	a.SetConfig(Config{WriteFile: true, Level: slog.LevelError})
 	b.Info(t.Context(), "b before")
 	_ = a.Close()
 	b.Info(t.Context(), "b after")
@@ -113,21 +113,21 @@ func TestSharedFileIsolationAndRelease(t *testing.T) {
 
 func TestSetConfigPathSwitchAndPolicy(t *testing.T) {
 	path := t.TempDir()
-	a := newTestLogger(t, Config{File: FileConfig{Path: path, RotateInterval: -1}})
-	b := newTestLogger(t, Config{File: FileConfig{Path: path, RotateInterval: -1}})
+	a := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path, RotateInterval: -1}})
+	b := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path, RotateInterval: -1}})
 	original := a.core.handler
-	diagnostic := captureStderr(t, func() { a.SetConfig(Config{File: FileConfig{RotateSize: 1}}) })
+	diagnostic := captureStderr(t, func() { a.SetConfig(Config{WriteFile: true, File: FileConfig{RotateSize: 1}}) })
 	if !strings.Contains(diagnostic, "conflicting rotation policy") || a.core.handler != original {
 		t.Fatal("shared policy mutated")
 	}
-	_, err := New(Config{File: FileConfig{Path: path, RotateSize: 1}})
+	_, err := New(Config{WriteFile: true, File: FileConfig{Path: path, RotateSize: 1}})
 	if err == nil {
 		t.Fatal("conflicting new instance accepted")
 	}
 	newPath := t.TempDir()
-	a.SetConfig(Config{File: FileConfig{Path: newPath, File: "other.log"}}).Info(t.Context(), "new path")
+	a.SetConfig(Config{WriteFile: true, File: FileConfig{Path: newPath, File: "other.log"}}).Info(t.Context(), "new path")
 	b.Info(t.Context(), "old path")
-	b.SetConfig(Config{File: FileConfig{RotateSize: 1, RotateBackupExpire: time.Hour}})
+	b.SetConfig(Config{WriteFile: true, File: FileConfig{RotateSize: 1, RotateBackupExpire: time.Hour}})
 	b.Info(t.Context(), "rotated")
 	if len(readLogFiles(t, path)) != 2 || !strings.Contains(readLogFiles(t, newPath)["other.log"], "new path") {
 		t.Fatal("path switch or exclusive policy update failed")
@@ -136,9 +136,9 @@ func TestSetConfigPathSwitchAndPolicy(t *testing.T) {
 
 func TestSetConfigRefreshesMaintenanceInterval(t *testing.T) {
 	path := t.TempDir()
-	logger := newTestLogger(t, Config{File: FileConfig{Path: path, RotateInterval: -1, RotateCheckInterval: time.Hour}})
+	logger := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path, RotateInterval: -1, RotateCheckInterval: time.Hour}})
 	logger.Info(t.Context(), "idle")
-	logger.SetConfig(Config{File: FileConfig{RotateInterval: 10 * time.Millisecond, RotateCheckInterval: 5 * time.Millisecond}})
+	logger.SetConfig(Config{WriteFile: true, File: FileConfig{RotateInterval: 10 * time.Millisecond, RotateCheckInterval: 5 * time.Millisecond}})
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
 		if len(readLogFiles(t, path)) == 2 {
@@ -151,7 +151,7 @@ func TestSetConfigRefreshesMaintenanceInterval(t *testing.T) {
 
 func TestSharedFileConcurrentRotation(t *testing.T) {
 	path := t.TempDir()
-	config := Config{File: FileConfig{Path: path, RotateSize: 512, RotateInterval: -1}}
+	config := Config{WriteFile: true, File: FileConfig{Path: path, RotateSize: 512, RotateInterval: -1}}
 	var wg sync.WaitGroup
 	for i := range 8 {
 		wg.Go(func() {
@@ -164,7 +164,7 @@ func TestSharedFileConcurrentRotation(t *testing.T) {
 			for j := range 50 {
 				logger.Infof(t.Context(), "record-%d-%d", i, j)
 			}
-			logger.SetConfig(Config{Level: slog.LevelDebug})
+			logger.SetConfig(Config{WriteFile: true, Level: slog.LevelDebug})
 		})
 	}
 	wg.Wait()
@@ -189,7 +189,7 @@ func TestDefaultSingletonAndCallers(t *testing.T) {
 		t.Fatal("not lazy singleton")
 	}
 	path := t.TempDir()
-	if SetConfig(Config{File: FileConfig{Path: path}, Level: slog.LevelDebug}) != Default() {
+	if SetConfig(Config{WriteFile: true, File: FileConfig{Path: path}, Level: slog.LevelDebug}) != Default() {
 		t.Fatal("identity changed")
 	}
 	_, file, line, _ := runtime.Caller(0)
@@ -217,7 +217,7 @@ func TestSetConfigConcurrentClose(t *testing.T) {
 		for range 4 {
 			wg.Go(func() {
 				for range 10 {
-					logger.SetConfig(Config{Level: slog.LevelDebug})
+					logger.SetConfig(Config{WriteFile: true, Level: slog.LevelDebug})
 					logger.Info(t.Context(), "concurrent")
 				}
 			})
@@ -240,7 +240,7 @@ func TestSetConfigConcurrentClose(t *testing.T) {
 func TestLevelSnapshotAndDirectoryAlias(t *testing.T) {
 	path := t.TempDir()
 	var level slog.LevelVar
-	a := newTestLogger(t, Config{File: FileConfig{Path: path}, Level: &level})
+	a := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path}, Level: &level})
 	level.Set(slog.LevelError)
 	if a.core.config.Level.Level() != slog.LevelInfo {
 		t.Fatal("mutable level leaked")
@@ -250,7 +250,7 @@ func TestLevelSnapshotAndDirectoryAlias(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	b := newTestLogger(t, Config{File: FileConfig{Path: alias}})
+	b := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: alias}})
 	if a.core.handler.state.lease.entry != b.core.handler.state.lease.entry {
 		t.Fatal("directory alias opened duplicate writer")
 	}
@@ -259,9 +259,9 @@ func TestLevelSnapshotAndDirectoryAlias(t *testing.T) {
 func TestSharedCallbacksAndHardLink(t *testing.T) {
 	path := t.TempDir()
 	var first, second, updated atomic.Int32
-	a := newTestLogger(t, Config{File: FileConfig{Path: path, OnError: func(error) { first.Add(1) }}})
-	b := newTestLogger(t, Config{File: FileConfig{Path: path, OnError: func(error) { second.Add(1) }}})
-	a.SetConfig(Config{File: FileConfig{OnError: func(error) { updated.Add(1) }}})
+	a := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path, OnError: func(error) { first.Add(1) }}})
+	b := newTestLogger(t, Config{WriteFile: true, File: FileConfig{Path: path, OnError: func(error) { second.Add(1) }}})
+	a.SetConfig(Config{WriteFile: true, File: FileConfig{OnError: func(error) { updated.Add(1) }}})
 	sharedFiles.report(b.core.handler.state.lease.entry, errors.New("test maintenance"))
 	if first.Load() != 0 || second.Load() != 1 || updated.Load() != 1 {
 		t.Fatal("callbacks not isolated")
@@ -271,7 +271,7 @@ func TestSharedCallbacksAndHardLink(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = New(Config{File: FileConfig{Path: path, File: "alias.log"}})
+	_, err = New(Config{WriteFile: true, File: FileConfig{Path: path, File: "alias.log"}})
 	if err == nil {
 		t.Fatal("hard link bypassed manager")
 	}
@@ -283,7 +283,7 @@ func TestConcurrentReopenAndRelease(t *testing.T) {
 	for range 4 {
 		wg.Go(func() {
 			for range 40 {
-				logger, err := New(Config{File: FileConfig{Path: path}})
+				logger, err := New(Config{WriteFile: true, File: FileConfig{Path: path}})
 				if err != nil {
 					t.Error(err)
 					return

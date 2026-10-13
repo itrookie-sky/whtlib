@@ -16,7 +16,7 @@ type Logger struct {
 	skip int
 }
 
-// New 创建日志实例，通过全局私有管理器获取文件输出资源。
+// New 创建日志实例，默认输出到终端，WriteFile 为 true 时获取共享文件资源。
 func New(config Config) (logger *Logger, err error) {
 	logger = &Logger{core: &loggerCore{config: config}}
 	err = logger.core.initialize()
@@ -26,7 +26,7 @@ func New(config Config) (logger *Logger, err error) {
 	return
 }
 
-// SetConfig 将非零配置项更新到当前实例，未填写项沿用旧值，返回原实例。
+// SetConfig 更新当前实例并返回原实例；WriteFile 始终生效，其他未填写项沿用旧值。
 // 更新失败时保留旧配置，并向 stderr 输出错误和调用堆栈。
 func (l *Logger) SetConfig(config Config) (logger *Logger) {
 	err := l.core.setConfig(config)
@@ -50,7 +50,10 @@ func (l *Logger) Skip(n int) (logger *Logger) {
 	}
 	clone := &Logger{core: &loggerCore{config: config, closed: l.core.closed}, skip: l.skip + n}
 	if l.core.handler != nil && !l.core.closed {
-		lease := sharedFiles.retain(l.core.handler.state.lease)
+		var lease *fileLease
+		if l.core.handler.state.lease != nil {
+			lease = sharedFiles.retain(l.core.handler.state.lease)
+		}
 		clone.core.handler = &handler{config: config, state: &outputState{writer: l.core.handler.state.writer, lease: lease}}
 	}
 	return clone
