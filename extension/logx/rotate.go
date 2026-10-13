@@ -21,7 +21,7 @@ type archive struct {
 }
 
 func (w *fileWriter) archivePath(now time.Time) (path string, err error) {
-	prefix := strings.TrimSuffix(w.config.File, ".log")
+	prefix := strings.TrimSuffix(w.activeName, ".log")
 	for range 10 {
 		var id [8]byte
 		_, err = rand.Read(id[:])
@@ -58,7 +58,7 @@ func (w *fileWriter) rotateLocked(now time.Time) (err error) {
 	if err != nil {
 		return errors.Join(err, w.openLocked(now))
 	}
-	err = os.Rename(filepath.Join(w.config.Path, w.config.File), archivePath)
+	err = os.Rename(filepath.Join(w.config.Path, w.activeName), archivePath)
 	if err != nil {
 		return errors.Join(err, w.openLocked(now))
 	}
@@ -82,13 +82,20 @@ func (w *fileWriter) Rotate() (err error) {
 }
 
 func (w *fileWriter) parseArchive(name string) (created time.Time, ok bool) {
-	prefix := strings.TrimSuffix(w.config.File, ".log") + "."
-	rest, found := strings.CutPrefix(name, prefix)
+	stem, found := strings.CutSuffix(name, ".log")
 	if !found {
 		return
 	}
-	rest, found = strings.CutSuffix(rest, ".log")
-	if !found || len(rest) != len(archiveTimeFormat)+1+16 || rest[len(archiveTimeFormat)] != '.' {
+	suffixSize := len(archiveTimeFormat) + 1 + 16
+	if len(stem) <= suffixSize || stem[len(stem)-suffixSize-1] != '.' {
+		return
+	}
+	base := stem[:len(stem)-suffixSize-1] + ".log"
+	if !w.pattern.matcher.MatchString(base) {
+		return
+	}
+	rest := stem[len(stem)-suffixSize:]
+	if rest[len(archiveTimeFormat)] != '.' {
 		return
 	}
 	id := rest[len(archiveTimeFormat)+1:]
@@ -110,8 +117,13 @@ func (w *fileWriter) cleanupLocked(now time.Time) (err error) {
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
-		created, ok := w.parseArchive(entry.Name())
-		if !ok {
+		name := entry.Name()
+		if name == w.activeName || name == w.pattern.expand(now) {
+			continue
+		}
+		created, ok := w.parseArchive(name)
+		dated := w.pattern.dynamic && w.pattern.matcher.MatchString(name)
+		if !ok && !dated {
 			continue
 		}
 		info, infoErr := entry.Info()
@@ -121,6 +133,9 @@ func (w *fileWriter) cleanupLocked(now time.Time) (err error) {
 		}
 		if !info.Mode().IsRegular() {
 			continue
+		}
+		if dated {
+			created = info.ModTime()
 		}
 		archives = append(archives, archive{name: entry.Name(), time: created})
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+	"time"
 )
 
 // fileManager 是进程内唯一的文件资源入口，同一路径只有一个写入和维护任务。
@@ -44,6 +45,10 @@ func (m *fileManager) acquire(config FileConfig, previous *fileLease) (lease *fi
 	if err != nil {
 		return
 	}
+	pattern, err := compileFilePattern(resolved.File)
+	if err != nil {
+		return
+	}
 	key := filepath.Join(resolved.Path, resolved.File)
 	for {
 		m.mu.Lock()
@@ -79,14 +84,30 @@ func (m *fileManager) acquire(config FileConfig, previous *fileLease) (lease *fi
 			m.mu.Unlock()
 			return
 		}
-		// 阻止硬链接、大小写别名等绕过路径键，为同一文件创建第二个 Writer。
-		info, statErr := os.Stat(key)
+		concretePath := filepath.Join(resolved.Path, pattern.expand(time.Now()))
+		info, statErr := os.Stat(concretePath)
+		for _, active := range m.files {
+			if active.config.Path != resolved.Path {
+				continue
+			}
+			if pattern.overlaps(active.writer.pattern) {
+				m.mu.Unlock()
+				return nil, resolved, fmt.Errorf("logx: overlapping filename expressions %q and %q", resolved.File, active.config.File)
+			}
+		}
+		// 硬链接和其他别名也不能绕过全局管理器。
 		if statErr == nil {
 			for _, active := range m.files {
-				activeInfo, activeErr := os.Stat(active.key)
-				if activeErr == nil && os.SameFile(info, activeInfo) {
+				active.writer.mu.Lock()
+				var activeInfo os.FileInfo
+				var activeErr error
+				if active.writer.file != nil {
+					activeInfo, activeErr = active.writer.file.Stat()
+				}
+				active.writer.mu.Unlock()
+				if activeInfo != nil && activeErr == nil && os.SameFile(info, activeInfo) {
 					m.mu.Unlock()
-					return nil, resolved, fmt.Errorf("logx: file alias %q is already managed as %q", key, active.key)
+					return nil, resolved, fmt.Errorf("logx: file alias %q is already managed as %q", concretePath, active.key)
 				}
 			}
 		}

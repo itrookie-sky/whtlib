@@ -40,7 +40,7 @@ func main() {
         Level: slog.LevelInfo,
         File: logx.FileConfig{
             Path: "./logs",
-            File: "app.log",
+            File: "{y-m-d}.log",
             RotateSize: 100 * 1024 * 1024,
             RotateInterval: 24 * time.Hour,
             RotateBackupExpire: 24 * time.Hour,
@@ -70,7 +70,7 @@ func main() {
 ## 全局单例
 
 ```go
-logx.SetConfig(logx.Config{WriteFile: true, File: logx.FileConfig{Path: "./logs", File: "app.log"}})
+logx.SetConfig(logx.Config{WriteFile: true, File: logx.FileConfig{Path: "./logs", File: "{y-m-d}.log"}})
 logx.Info(ctx, "创建订单成功", "orderId", "o123")
 logx.Default().Infof(ctx, "订单：%s", "o123")
 ```
@@ -113,7 +113,7 @@ OnError 按实例登记，共享文件的后台错误通知当前登记的各实
 | 字段                | 默认值         | 覆盖与禁用                          |
 | --------------------- | ---------------- | ------------------------------------- |
 | Path                | ./logs         | 自定义目录                          |
-| File                | app.log        | 单个 .log 文件名，不允许路径分隔符  |
+| File                | {y-m-d}.log        | 单个 .log 文件名，支持花括号日期表达式，不允许路径分隔符  |
 | RotateSize          | 100 MiB        | 字节数；0 默认，-1 禁用             |
 | RotateInterval      | 24h            | time.Duration；0 默认，-1 禁用      |
 | RotateBackupExpire  | 24h            | time.Duration；0 默认，-1 禁用      |
@@ -142,3 +142,22 @@ defer wrapped.Close()
 ```
 
 不要在高频打印中持续创建不关闭的 Skip 实例。关闭父实例不会关闭派生实例，反之亦然。每个实例都应在不再使用时 Close，应用退出时也应关闭全局单例。重复 Close 安全；关闭后打印向 stderr 输出关闭错误与堆栈。
+
+## 文件名日期表达式
+
+默认 `FileConfig.File` 为 `{y-m-d}.log`。仅花括号内部识别小写 `y`（四位年份）、`m`（两位月份）、`d`（两位日期），花括号外保持原样：
+
+| 配置 | 2026 年 1 月 2 日的文件名 |
+| --- | --- |
+| `sql-{y-m-d}.log` | `sql-2026-01-02.log` |
+| `ymd-{ymd}.log` | `ymd-20260102.log` |
+| `{y-m-d}.log` | `2026-01-02.log` |
+| `system-y-m-d.log` | `system-y-m-d.log` |
+
+花括号内可使用 `-`、`_`、`.` 分隔符，暂不支持其他占位符；空表达式、嵌套或未配对花括号返回配置错误。文件路径不能放在表达式内。
+
+按本地时间在每次写入前检查目标名称，跨日、跨月或跨年后自动切换，已有日期文件以追加模式打开。后台检查也会切换日期，因此空闲期间可能创建当天的空文件。文件切换失败时保留旧句柄，本条文件写入报告错误，终端输出不受影响。
+
+同一目录、同一表达式共享 Writer。不同表达式（包括固定文件名）若可能生成相同名称，保守拒绝同时启用，即使当前日期尚未冲突；修改路径或使用不同业务前缀可避免冲突。
+
+按大小或时间轮转的归档，以展开后的日期文件名作为前缀。清理同时匹配当前表达式的历史日期文件和归档：历史日期文件从最后修改时间计算保留期，归档从归档名称中的时间计算；两者合计应用保留数量。当前打开文件和当天目标文件不删除。默认保留 24h。

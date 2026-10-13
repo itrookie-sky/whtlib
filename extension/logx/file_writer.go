@@ -13,7 +13,8 @@ import (
 
 // FileConfig 配置文件输出；零值使用默认值，部分阈值以 -1 禁用。
 type FileConfig struct {
-	Path                string
+	Path string
+	// File 支持花括号中的 y/m/d 日期占位符，默认 {y-m-d}.log。
 	File                string
 	RotateSize          int64
 	RotateInterval      time.Duration
@@ -28,7 +29,7 @@ type FileConfig struct {
 func DefaultFileConfig() (config FileConfig) {
 	return FileConfig{
 		Path:                "./logs",
-		File:                "app.log",
+		File:                "{y-m-d}.log",
 		RotateSize:          100 * 1024 * 1024,
 		RotateInterval:      24 * time.Hour,
 		RotateBackupExpire:  24 * time.Hour,
@@ -63,6 +64,10 @@ func normalizeFileConfig(config FileConfig) (result FileConfig, err error) {
 	if result.File == ".log" || !strings.HasSuffix(result.File, ".log") || strings.ContainsAny(result.File, `/\`) || filepath.Base(result.File) != result.File {
 		return result, fmt.Errorf("logx: invalid log filename %q", result.File)
 	}
+	_, err = compileFilePattern(result.File)
+	if err != nil {
+		return
+	}
 	result.Path, err = filepath.Abs(result.Path)
 	if err != nil {
 		return
@@ -76,18 +81,20 @@ func normalizeFileConfig(config FileConfig) (result FileConfig, err error) {
 // fileWriter 提供单进程内并发安全的日志写入、轮转和清理。
 // 同一活动文件只能由一个 fileWriter 管理。
 type fileWriter struct {
-	mu       sync.Mutex
-	config   FileConfig
-	file     *os.File
-	size     int64
-	started  time.Time
-	closed   bool
-	stop     chan struct{}
-	done     chan struct{}
-	wake     chan struct{}
-	pending  error
-	close    sync.Once
-	closeErr error
+	mu         sync.Mutex
+	config     FileConfig
+	file       *os.File
+	pattern    *filePattern
+	activeName string
+	size       int64
+	started    time.Time
+	closed     bool
+	stop       chan struct{}
+	done       chan struct{}
+	wake       chan struct{}
+	pending    error
+	close      sync.Once
+	closeErr   error
 }
 
 // newFileWriter 创建文件 Writer 并启动后台维护，调用方需要 Close。
@@ -101,6 +108,10 @@ func newFileWriter(config FileConfig) (writer *fileWriter, err error) {
 		return
 	}
 	writer = &fileWriter{config: config, stop: make(chan struct{}), done: make(chan struct{}), wake: make(chan struct{}, 1)}
+	writer.pattern, err = compileFilePattern(config.File)
+	if err != nil {
+		return nil, err
+	}
 	err = writer.openLocked(time.Now())
 	if err != nil {
 		return nil, err
@@ -114,7 +125,8 @@ func newFileWriter(config FileConfig) (writer *fileWriter, err error) {
 }
 
 func (w *fileWriter) openLocked(now time.Time) (err error) {
-	path := filepath.Join(w.config.Path, w.config.File)
+	name := w.pattern.expand(now)
+	path := filepath.Join(w.config.Path, name)
 	info, statErr := os.Lstat(path)
 	if statErr == nil && !info.Mode().IsRegular() {
 		return fmt.Errorf("logx: active file is not a regular file")
@@ -122,16 +134,20 @@ func (w *fileWriter) openLocked(now time.Time) (err error) {
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
 	}
-	w.file, err = os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o640)
 	if err != nil {
 		return
 	}
-	info, err = w.file.Stat()
+	info, err = file.Stat()
 	if err != nil {
-		_ = w.file.Close()
-		w.file = nil
+		_ = file.Close()
 		return
 	}
+	if w.file != nil {
+		err = w.file.Close()
+	}
+	w.file = file
+	w.activeName = name
 	w.size = info.Size()
 	w.started = now
 	if w.size > 0 {
@@ -154,6 +170,10 @@ func (w *fileWriter) notifyLocked(err error) {
 
 // Write 写入一个完整记录，大小超限时在写入前轮转，不拆分 p。
 func (w *fileWriter) Write(p []byte) (n int, err error) {
+	return w.writeAt(p, time.Now())
+}
+
+func (w *fileWriter) writeAt(p []byte, now time.Time) (n int, err error) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.closed {
@@ -162,8 +182,7 @@ func (w *fileWriter) Write(p []byte) (n int, err error) {
 	if len(p) == 0 {
 		return
 	}
-	now := time.Now()
-	if w.file == nil {
+	if w.file == nil || w.activeName != w.pattern.expand(now) {
 		err = w.openLocked(now)
 		if err != nil {
 			return
@@ -256,6 +275,9 @@ func (w *fileWriter) maintain() {
 		err := w.pending
 		w.pending = nil
 		now := time.Now()
+		if w.activeName != w.pattern.expand(now) {
+			err = errors.Join(err, w.openLocked(now))
+		}
 		if w.file != nil && w.size > 0 && w.config.RotateInterval > 0 && now.Sub(w.started) >= w.config.RotateInterval {
 			err = errors.Join(err, w.rotateLocked(now))
 		}

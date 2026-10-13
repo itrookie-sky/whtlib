@@ -30,7 +30,7 @@ func captureStdout(t *testing.T, call func()) (output string) {
 
 func TestTerminalDefaultAndSkip(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "not-created")
-	logger, err := New(Config{File: FileConfig{Path: path}})
+	logger, err := New(Config{File: FileConfig{File: "app.log", Path: path}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +57,7 @@ func TestTerminalDefaultAndSkip(t *testing.T) {
 func TestOutputSwitchAndSharedFile(t *testing.T) {
 	path := t.TempDir()
 	enabled := true
-	a, err := New(Config{WriteFile: enabled, File: FileConfig{Path: path}})
+	a, err := New(Config{WriteFile: enabled, File: FileConfig{File: "app.log", Path: path}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +94,7 @@ func TestOutputSwitchAndSharedFile(t *testing.T) {
 		t.Fatal("could not reenable")
 	}
 	blocked := filepath.Join(path, "app.log")
-	a.SetConfig(Config{File: FileConfig{Path: blocked}})
+	a.SetConfig(Config{File: FileConfig{File: "app.log", Path: blocked}})
 	if a.core.config.WriteFile || a.core.handler.state.lease != nil {
 		t.Fatal("omitted bool did not select terminal")
 	}
