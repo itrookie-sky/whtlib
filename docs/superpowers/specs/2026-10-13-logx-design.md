@@ -24,12 +24,12 @@ Logger 负责入口、级别判断和调用位置；Handler 负责格式与同�
 末尾业务属性 JSON 仅在传入结构化属性时输出，方括号表示可选部分，不是实际字符。
 
 ```text
-2026/10/13 14:30:00 {"traceId":"abc123","userId":1001} order/service.go:42 INFO 创建订单成功
-2026/10/13 14:30:01 {"userId":1001} order/service.go:42 INFO 创建订单成功 {"orderId":"o123"}
-2026/10/13 14:30:02 {} order/service.go:42 ERROR 创建订单失败
+2026-10-13 14:30:00.000 {"traceId":"abc123","userId":1001} order/service.go:42 INFO 创建订单成功
+2026-10-13 14:30:01.123 {"userId":1001} order/service.go:42 INFO 创建订单成功 {"orderId":"o123"}
+2026-10-13 14:30:02.456 {} order/service.go:42 ERROR 创建订单失败
 ```
 
-日期默认使用本地时区，格式为 YYYY/MM/DD HH:mm:ss。上下文 JSON 固定处于日期之后首位，traceId 存在时必须是对象第一个成员，其余字段按配置顺序输出。无有效字段时输出 `{}`。
+日期默认使用本地时区，格式为 YYYY-MM-DD HH:mm:ss.SSS（固定三位毫秒）。上下文 JSON 固定处于日期之后首位，traceId 存在时必须是对象第一个成员，其余字段按配置顺序输出。无有效字段时输出 `{}`。
 
 键和值使用 encoding/json 编码并保留 JSON 类型，正文换行与回车转义，每条记录以一个真实换行结束。整条日志为文本与 JSON 块的混合格式，不是完整 JSON 文档。
 

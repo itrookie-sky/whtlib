@@ -48,7 +48,7 @@ func main() {
 输出形如：
 
 ```text
-2026/10/13 14:30:00 {"traceId":"abc123","userId":1001} app/main.go:42 INFO 创建订单成功 {"orderId":"o123"}
+2026-10-13 14:30:00.000 {"traceId":"abc123","userId":1001} app/main.go:42 INFO 创建订单成功 {"orderId":"o123"}
 ```
 
 上下文 JSON 固定在日期后，traceId 第一，自定义字段按配置顺序排列。缺失字段省略，全缺失输出 `{}`。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记，其他日志内容仍尝试写入。所有打印方法及内部 output 均无返回值，编码和写入错误由 output 连同当前 goroutine 的调用堆栈直接写入 stderr，不经过配置的 Writer，避免递归；初始化与 Close 仍返回错误。

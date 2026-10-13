@@ -67,7 +67,7 @@ func TestContextAndAttributes(t *testing.T) {
 	ctx = context.WithValue(ctx, testKey(6), (*int)(nil))
 	logger.Info(ctx, "created\norder", "orderId", "o1")
 	line := buffer.String()
-	if !strings.HasPrefix(line[20:], `{"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "INFO created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
+	if !strings.HasPrefix(line[24:], `{"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "INFO created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
 		t.Fatalf("unexpected record: %q", line)
 	}
 }
@@ -286,5 +286,29 @@ func TestSuccessfulAndFilteredOutputHasNoDiagnostic(t *testing.T) {
 	})
 	if diagnostic != "" || !strings.Contains(buffer.String(), "INFO success") {
 		t.Fatalf("unexpected diagnostic %q or output %q", diagnostic, buffer.String())
+	}
+}
+
+func TestTimestampMilliseconds(t *testing.T) {
+	for _, tc := range []struct {
+		nanos     int
+		timestamp string
+	}{
+		{nanos: 0, timestamp: "2026-10-13 14:30:00.000"},
+		{nanos: 123456789, timestamp: "2026-10-13 14:30:00.123"},
+	} {
+		t.Run(tc.timestamp, func(t *testing.T) {
+			var buffer bytes.Buffer
+			logger := newBufferedLogger(t, &buffer, Config{})
+			record := slog.NewRecord(time.Date(2026, 10, 13, 14, 30, 0, tc.nanos, time.Local), slog.LevelInfo, "timestamp", 0)
+			err := logger.core.handler.Handle(t.Context(), record)
+			if err != nil {
+				t.Fatal(err)
+			}
+			expected := tc.timestamp + " {} INFO timestamp\n"
+			if buffer.String() != expected {
+				t.Fatalf("want %q, got %q", expected, buffer.String())
+			}
+		})
 	}
 }
