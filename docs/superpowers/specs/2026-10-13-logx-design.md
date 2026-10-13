@@ -41,7 +41,7 @@ New 接收 Config，返回 Logger 和初始化错误。构造时复制字段切�
 
 | 配置项 | 默认值 | 含义 |
 | --- | --- | --- |
-| WriteFile | false | bool；false 仅终端，true 仅文件；SetConfig 始终应用此值，未填写也视为 false。 |
+| WriteFile | false | bool；false 仅终端，true 同时输出终端和文件；SetConfig 始终应用此值，未填写也视为 false。 |
 | File | 默认文件配置 | FileConfig，设置路径、文件名和轮转策略。 |
 | Level | slog.LevelInfo | 接收 slog.Leveler，过滤低于阈值的日志。 |
 | TraceKey | 字符串 traceId | 从 ctx 读取 traceId 的 key，输出名称固定为 traceId。 |

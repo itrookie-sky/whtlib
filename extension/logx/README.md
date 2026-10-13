@@ -4,7 +4,7 @@
 
 ## 输出目标
 
-`WriteFile` 为 bool，默认 false：false 仅输出到终端（os.Stdout），不创建文件、目录或维护任务；true 仅写文件。SetConfig 始终应用 WriteFile，false 关闭文件输出；文件模式下更新其他配置也需显式传入 WriteFile: true。切换只影响当前实例，最后一个文件引用释放时才关闭文件。
+`WriteFile` 为 bool，默认 false：false 仅输出到终端（os.Stdout），不创建文件、目录或维护任务；true 同时输出到终端和文件。SetConfig 始终应用 WriteFile，false 关闭文件输出；文件模式下更新其他配置也需显式传入 WriteFile: true。切换只影响当前实例，最后一个文件引用释放时才关闭文件。
 
 ```go
 logger, err := logx.New(logx.Config{WriteFile: false})

@@ -33,7 +33,7 @@ func buildHandler(config Config, previous *handler) (next *handler, resolved Con
 			return
 		}
 		resolved.File = fileConfig
-		state.writer = lease.entry.writer
+		state.writer = &dualWriter{terminal: terminalOutput, file: lease.entry.writer}
 		state.lease = lease
 	}
 	next = &handler{state: state, config: resolved}

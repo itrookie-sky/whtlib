@@ -1,7 +1,9 @@
 package logx
 
 import (
+	"bytes"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -72,13 +74,13 @@ func TestOutputSwitchAndSharedFile(t *testing.T) {
 	}
 	output := captureStdout(t, func() {
 		a.SetConfig(Config{WriteFile: false}).Info(t.Context(), "terminal only")
-		b.Info(t.Context(), "file only")
+		b.Info(t.Context(), "terminal and file")
 	})
-	if !strings.Contains(output, "terminal only") || strings.Contains(output, "file only") {
+	if !strings.Contains(output, "terminal only") || !strings.Contains(output, "terminal and file") {
 		t.Fatal(output)
 	}
 	data := logContents(t, path)
-	if strings.Contains(data, "terminal only") || !strings.Contains(data, "file only") {
+	if strings.Contains(data, "terminal only") || !strings.Contains(data, "terminal and file") {
 		t.Fatal(data)
 	}
 	_ = b.Close()
@@ -122,5 +124,37 @@ func TestConcurrentTerminalInstances(t *testing.T) {
 	})
 	if strings.Count(output, "INFO complete record\n") != 100 {
 		t.Fatal("lost or split terminal records")
+	}
+}
+
+func TestDualWriterFailureIsolation(t *testing.T) {
+	failure := errors.New("output failed")
+	for _, tc := range []struct {
+		name          string
+		terminalFails bool
+		failure       error
+	}{
+		{name: "terminal error", terminalFails: true, failure: failure},
+		{name: "file error", failure: failure},
+		{name: "terminal short write", terminalFails: true},
+		{name: "file short write"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buffer bytes.Buffer
+			var failed io.Writer = failingWriter{err: tc.failure}
+			writer := &dualWriter{terminal: &buffer, file: failed}
+			if tc.terminalFails {
+				writer.terminal = failed
+				writer.file = &buffer
+			}
+			_, err := writer.Write([]byte("complete record\n"))
+			expected := tc.failure
+			if expected == nil {
+				expected = io.ErrShortWrite
+			}
+			if !errors.Is(err, expected) || buffer.String() != "complete record\n" {
+				t.Fatalf("output=%q, err=%v", buffer.String(), err)
+			}
+		})
 	}
 }
