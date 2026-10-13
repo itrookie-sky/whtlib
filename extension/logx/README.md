@@ -96,16 +96,17 @@ OnError 按实例登记，共享文件的后台错误通知当前登记的各实
 
 ## 文件默认配置
 
-| 字段 | 默认值 | 覆盖与禁用 |
-| --- | --- | --- |
-| Path | ./logs | 自定义目录 |
-| File | app.log | 单个 .log 文件名，不允许路径分隔符 |
-| RotateSize | 100 MiB | 字节数；0 默认，-1 禁用 |
-| RotateInterval | 24h | time.Duration；0 默认，-1 禁用 |
-| RotateBackupExpire | 24h | time.Duration；0 默认，-1 禁用 |
-| RotateBackupLimit | 0 | 正数限制归档数量；0 不限数量 |
-| RotateCheckInterval | 1m | time.Duration；0 默认 |
-| OnError | 向 stderr 输出 | 可传入 func(error) 接收后台维护错误 |
+
+| 字段                | 默认值         | 覆盖与禁用                          |
+| --------------------- | ---------------- | ------------------------------------- |
+| Path                | ./logs         | 自定义目录                          |
+| File                | app.log        | 单个 .log 文件名，不允许路径分隔符  |
+| RotateSize          | 100 MiB        | 字节数；0 默认，-1 禁用             |
+| RotateInterval      | 24h            | time.Duration；0 默认，-1 禁用      |
+| RotateBackupExpire  | 24h            | time.Duration；0 默认，-1 禁用      |
+| RotateBackupLimit   | 0              | 正数限制归档数量；0 不限数量        |
+| RotateCheckInterval | 1m             | time.Duration；0 默认               |
+| OnError             | 向 stderr 输出 | 可传入 func(error) 接收后台维护错误 |
 
 使用 `DefaultFileConfig()` 获取默认配置再覆盖字段，也可直接传入部分配置。-1 是精确的哨兵值，其他负数无效；时长禁用时使用 `-1`，不是 `-time.Second`。
 
