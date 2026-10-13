@@ -45,7 +45,8 @@ func validKey(key any) (valid bool) {
 	return !isNil(key) && reflect.ValueOf(key).Comparable()
 }
 
-func normalizeOptions(options Options) (result Options, err error) {
+// BuildDefaultOptions 构建默认的 Options。
+func BuildDefaultOptions(options Options) (result Options, err error) {
 	result = options
 	if result.Skip < 0 {
 		return result, fmt.Errorf("logx: negative skip")

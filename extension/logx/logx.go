@@ -16,7 +16,7 @@ type Logger struct {
 
 // New 创建日志实例，未指定 Writer 时创建内置文件 Writer。
 func New(options Options) (logger *Logger, err error) {
-	options, err = normalizeOptions(options)
+	options, err = BuildDefaultOptions(options)
 	if err != nil {
 		return
 	}
