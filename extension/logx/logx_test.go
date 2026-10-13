@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -102,7 +103,10 @@ func TestFilteringCancellationAndClose(t *testing.T) {
 	derived := logger.Skip(1)
 	_ = logger.Close()
 	before := buffer.String()
-	derived.Info(t.Context(), "closed")
+	diagnostic := captureStderr(t, func() { derived.Info(t.Context(), "closed") })
+	if !strings.Contains(diagnostic, os.ErrClosed.Error()) || !strings.Contains(diagnostic, "goroutine ") {
+		t.Fatalf("closed logger diagnostic missing: %s", diagnostic)
+	}
 	if buffer.String() != before {
 		t.Fatal("derived logger wrote after close")
 	}
@@ -123,15 +127,19 @@ func TestErrorsAndOwnership(t *testing.T) {
 	failure := errors.New("write failure")
 	logger := newTestLogger(t, Options{Writer: failingWriter{err: failure}})
 	ctx := context.WithValue(t.Context(), "traceId", make(chan int))
-	logger.Info(ctx, "failed")
-	err := logger.output(ctx, slog.LevelInfo, "failed", nil, false)
-	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "traceId") {
-		t.Fatalf("missing combined error: %v", err)
+	diagnostic := captureStderr(t, func() { logger.Info(ctx, "failed") })
+	for _, expected := range []string{"write failure", "traceId", "goroutine ", "(*Logger).output", "TestErrorsAndOwnership"} {
+		if !strings.Contains(diagnostic, expected) {
+			t.Fatalf("missing %q in diagnostic: %s", expected, diagnostic)
+		}
+	}
+	if strings.Count(diagnostic, "\ngoroutine ") != 1 {
+		t.Fatalf("expected one stack for combined errors: %s", diagnostic)
 	}
 	short := newTestLogger(t, Options{Writer: failingWriter{}})
-	short.Info(t.Context(), "short")
-	if !errors.Is(short.output(t.Context(), slog.LevelInfo, "short", nil, false), io.ErrShortWrite) {
-		t.Fatal("short write missing")
+	diagnostic = captureStderr(t, func() { short.Info(t.Context(), "short") })
+	if !strings.Contains(diagnostic, io.ErrShortWrite.Error()) || !strings.Contains(diagnostic, "goroutine ") {
+		t.Fatalf("short write diagnostic missing: %s", diagnostic)
 	}
 	var buffer closingBuffer
 	owned := newTestLogger(t, Options{Writer: &buffer})
@@ -204,8 +212,50 @@ func TestConcurrentLogger(t *testing.T) {
 func TestGroupEncodingErrorPreservesSiblings(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newTestLogger(t, Options{Writer: &buffer})
-	logger.Info(t.Context(), "encoding", slog.Group("group", slog.Any("bad", make(chan int)), slog.Int("good", 1)))
+	diagnostic := captureStderr(t, func() {
+		logger.Info(t.Context(), "encoding", slog.Group("group", slog.Any("bad", make(chan int)), slog.Int("good", 1)))
+	})
+	if !strings.Contains(diagnostic, "encode") {
+		t.Fatalf("encoding diagnostic missing: %s", diagnostic)
+	}
 	if !strings.Contains(buffer.String(), `{"group":{"bad":"[json encode error]","good":1}}`) {
 		t.Fatalf("encoding discarded siblings: %q", buffer.String())
+	}
+}
+
+// captureStderr 仅用于串行测试，避免真实堆栈诊断污染测试输出。
+func captureStderr(t *testing.T, call func()) (output string) {
+	t.Helper()
+	file, err := os.CreateTemp(t.TempDir(), "stderr-*")
+	if err != nil {
+		t.Fatal(err)
+	}
+	previous := os.Stderr
+	os.Stderr = file
+	defer func() {
+		os.Stderr = previous
+		_ = file.Close()
+	}()
+	call()
+	_, err = file.Seek(0, io.SeekStart)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := io.ReadAll(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func TestSuccessfulAndFilteredOutputHasNoDiagnostic(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newTestLogger(t, Options{Writer: &buffer})
+	diagnostic := captureStderr(t, func() {
+		logger.Info(t.Context(), "success")
+		logger.Debugf(t.Context(), "%s", explosiveStringer{})
+	})
+	if diagnostic != "" || !strings.Contains(buffer.String(), "INFO success") {
+		t.Fatalf("unexpected diagnostic %q or output %q", diagnostic, buffer.String())
 	}
 }
