@@ -41,10 +41,7 @@ func main() {
 
     ctx := context.WithValue(context.Background(), traceKey, "abc123")
     ctx = context.WithValue(ctx, userKey, 1001)
-    err = logger.Info(ctx, "创建订单成功", "orderId", "o123")
-    if err != nil {
-        panic(err)
-    }
+    logger.Info(ctx, "创建订单成功", "orderId", "o123")
 }
 ```
 
@@ -54,7 +51,7 @@ func main() {
 2026/10/13 14:30:00 {"traceId":"abc123","userId":1001} app/main.go:42 INFO 创建订单成功 {"orderId":"o123"}
 ```
 
-上下文 JSON 固定在日期后，traceId 第一，自定义字段按配置顺序排列。缺失字段省略，全缺失输出 `{}`。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记并返回错误，其他日志内容仍写入。
+上下文 JSON 固定在日期后，traceId 第一，自定义字段按配置顺序排列。缺失字段省略，全缺失输出 `{}`。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记，其他日志内容仍尝试写入。所有打印方法均无返回值，与 slog 一致忽略编码和写入错误；初始化、Close 及 FileWriter 的资源管理方法仍返回错误。
 
 普通方法的可变参数为 slog 结构化属性；文本格式化使用 Infof 等方法。ctx 取消仍可记录日志，nil ctx 会 panic。默认 Info 级别，可通过 Options.Level 传入 slog.LevelVar 动态调整。
 
@@ -89,4 +86,4 @@ FileWriter 也可独立通过 `logx.NewFileWriter(logx.FileOptions{...})` 创建
 
 默认显示日志调用处的 `目录/文件:行号`，`FullPath: true` 输出完整路径。在业务日志封装内调用 `logger.Skip(1).Info(ctx, "消息")` 可以定位上层调用者。Skip 追加层数，派生实例不修改原实例；负数或溢出 panic，超出栈时省略位置。
 
-所有派生实例共享关闭状态，任一实例 Close 后，所有实例输出均返回 os.ErrClosed。内部创建的 FileWriter 随 Logger 关闭；外部 Writer 始终由调用方管理。请在应用退出时调用 Close 停止维护任务。
+所有派生实例共享关闭状态，任一实例 Close 后，所有实例的打印调用均不再输出。FileWriter 关闭后的操作仍返回 os.ErrClosed。内部创建的 FileWriter 随 Logger 关闭；外部 Writer 始终由调用方管理。请在应用退出时调用 Close 停止维护任务。

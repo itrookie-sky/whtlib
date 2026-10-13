@@ -53,9 +53,9 @@ context key 支持可比较的自定义类型。TraceKey 未设置时使用默�
 
 | 方法 | 行为 |
 | --- | --- |
-| Debug、Info、Warn、Error | 接收 ctx、消息及可变结构化属性，返回错误。 |
-| Log | 接收 ctx、slog.Level、消息及结构化属性，返回错误。 |
-| Debugf、Infof、Warnf、Errorf | 接收 ctx、格式串及参数，以 fmt.Sprintf 生成正文，返回错误。 |
+| Debug、Info、Warn、Error | 接收 ctx、消息及可变结构化属性，无返回值。 |
+| Log | 接收 ctx、slog.Level、消息及结构化属性，无返回值。 |
+| Debugf、Infof、Warnf、Errorf | 接收 ctx、格式串及参数，以 fmt.Sprintf 生成正文，无返回值。 |
 | Skip(n) | 返回额外跳过 n 层调用的派生 Logger。 |
 | Close | 关闭共享实例体系，仅释放 Logger 自己创建的内置 Writer。 |
 
@@ -63,7 +63,7 @@ context key 支持可比较的自定义类型。TraceKey 未设置时使用默�
 
 所有输出方法要求非 nil ctx，nil 直接 panic；无请求上下文时显式传 context.Background()。ctx 取消不阻止日志输出。Writer.Write 和资源关闭接口不要求 ctx。
 
-logx 先调用 Handler.Enabled，过滤后的日志不提取字段、不解析栈、不格式化正文。使用 slog.NewRecord 构造 Record，再调用 Handler.Handle 并返回其错误，不经会丢弃 Handler 错误的 slog.Logger 常用输出方法转发。
+logx 先调用 Handler.Enabled，过滤后的日志不提取字段、不解析栈、不格式化正文。使用 slog.NewRecord 构造 Record，再调用 Handler.Handle。打印方法与 slog 一致，忽略内部编码和写入错误，不返回给调用方；构造、Close 和 FileWriter 方法仍保留错误返回。
 
 Handler 完整实现 Enabled、Handle、WithAttrs、WithGroup，遵循值解析、空属性、空组和嵌套分组约定。派生 Handler 共享输出锁，属性配置只读。Record 时间或 PC 为零时，分别省略时间或源码位置。
 
@@ -73,7 +73,7 @@ Handler 完整实现 Enabled、Handle、WithAttrs、WithGroup，遵循值解析�
 
 nil、typed nil 和空字符串省略；0 与 false 保留，其余值按标准 JSON 规则编码。调用方不得在输出期间并发修改字段引用的对象。
 
-某字段编码失败时，替换成 JSON 字符串 `"[json encode error]"`，继续输出并返回带字段名的错误；同时写入失败时通过 errors.Join 合并。用户自定义 MarshalJSON 内部的 panic 不主动恢复。
+某字段编码失败时，替换成 JSON 字符串 `"[json encode error]"`，继续输出；Handler 内部保留带字段名的错误，同时写入失败时通过 errors.Join 合并，公开打印方法忽略这些错误。用户自定义 MarshalJSON 内部的 panic 不主动恢复。
 
 ## 调用位置与 Skip
 
@@ -87,7 +87,7 @@ nil、typed nil 和空字符串省略；0 与 false 保留，其余值按标准 
 
 传入外部 Writer 时，不创建日志目录、不启动轮转或清理，也不关闭外部 Writer。需要同时写文件和终端时，调用方可创建 FileWriter，使用 io.MultiWriter 组合后传入，并自行管理生命周期。
 
-未传 Writer 时，New 创建默认 FileWriter，目录或文件不可写立即返回错误。Logger.Close 停止维护任务并关闭自有文件，重复调用安全；关闭后所有派生 Logger 的输出返回 os.ErrClosed。
+未传 Writer 时，New 创建默认 FileWriter，目录或文件不可写立即返回错误。Logger.Close 停止维护任务并关闭自有文件，重复调用安全；关闭后所有派生 Logger 的打印调用不再输出；FileWriter 的关闭后操作返回 os.ErrClosed。
 
 FileWriter 可通过 NewFileWriter 独立创建，实现 io.WriteCloser，另提供 Rotate、Cleanup、Sync。Close 等待维护任务退出，释放文件，不额外归档。普通写入不承诺每条日志 fsync，调用方可显式 Sync。
 
@@ -161,7 +161,7 @@ extension/logx/
 | --- | --- |
 | traceId 与自定义字段齐全或部分缺失 | 日期后 JSON 有效，traceId 第一，其余按配置顺序；全缺失输出 {}。 |
 | nil、typed nil、空字符串、0、false | 前三者省略，后两者保留 JSON 类型。 |
-| 编码失败 | 输出标记并保留日志，返回编码错误。 |
+| 编码失败 | 输出标记并保留其他日志内容，打印方法不返回错误。 |
 | ctx 取消或为 nil | 取消仍输出，nil panic。 |
 | 级别过滤 | 不进行字段提取、格式化或写入。 |
 | 普通、格式化及 Log 方法的 Skip | 业务行号正确，覆盖内联与叠加 skip，越界省略位置。 |
@@ -171,7 +171,7 @@ extension/logx/
 | 重启、归档名冲突及超大单条日志 | 不截断旧数据、不覆盖归档、不拆分单条记录。 |
 | 过期及数量超限 | 只删除当前日志归档，不影响活动文件和其他文件。 |
 | 并发写入、轮转、清理和关闭 | 记录不交错，不访问已关闭句柄，派生实例共享关闭状态。 |
-| 写入、后台维护或短写错误 | 返回错误或调用 OnError，不递归记录，不误报成功。 |
+| 写入、后台维护或短写错误 | 打印方法忽略同步错误；直接调用 FileWriter 仍返回错误，后台错误调用 OnError，不递归记录。 |
 | 重复 Close | 资源已释放，调用安全。 |
 
 用户已授权添加并运行模块测试。实现验证覆盖模块构建、静态检查及 race 测试；测试范围包括上下文顺序、调用位置、轮转与清理、后台错误和并发关闭。

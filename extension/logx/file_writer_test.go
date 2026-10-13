@@ -240,17 +240,14 @@ func TestFileOptionsAndNoEmptyRotation(t *testing.T) {
 
 func TestLoggerOwnsDefaultWriter(t *testing.T) {
 	logger := newTestLogger(t, Options{File: FileOptions{Path: t.TempDir()}})
-	err := logger.Info(t.Context(), "owned")
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger.Info(t.Context(), "owned")
 	_ = logger.Close()
 	select {
 	case <-logger.handler.state.owned.done:
 	default:
 		t.Fatal("maintenance leaked after logger close")
 	}
-	_, err = logger.handler.state.owned.Write([]byte("closed"))
+	_, err := logger.handler.state.owned.Write([]byte("closed"))
 	if !errors.Is(err, os.ErrClosed) {
 		t.Fatal("owned file not closed")
 	}

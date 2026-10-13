@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -40,10 +39,7 @@ func TestContextAndAttributes(t *testing.T) {
 	ctx = context.WithValue(ctx, testKey(4), false)
 	ctx = context.WithValue(ctx, testKey(5), "")
 	ctx = context.WithValue(ctx, testKey(6), (*int)(nil))
-	err := logger.Info(ctx, "created\norder", "orderId", "o1")
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger.Info(ctx, "created\norder", "orderId", "o1")
 	line := buffer.String()
 	if !strings.HasPrefix(line[20:], `{"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "INFO created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
 		t.Fatalf("unexpected record: %q", line)
@@ -54,10 +50,7 @@ func TestCallerAndSkip(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newTestLogger(t, Options{Writer: &buffer})
 	_, file, line, _ := runtime.Caller(0)
-	err := logger.Info(t.Context(), "direct")
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger.Info(t.Context(), "direct")
 	expected := fmt.Sprintf("%s:%d INFO direct", filepath.Base(file), line+1)
 	if !strings.Contains(buffer.String(), expected) {
 		t.Fatalf("want %q, got %q", expected, buffer.String())
@@ -71,23 +64,20 @@ func TestCallerAndSkip(t *testing.T) {
 	}
 	buffer.Reset()
 	_, _, line, _ = runtime.Caller(0)
-	err = logger.Infof(t.Context(), "number %d", 3)
-	if err != nil || !strings.Contains(buffer.String(), fmt.Sprintf("%s:%d INFO number 3", filepath.Base(file), line+1)) {
-		t.Fatalf("formatted caller: %s, %v", buffer.String(), err)
+	logger.Infof(t.Context(), "number %d", 3)
+	if !strings.Contains(buffer.String(), fmt.Sprintf("%s:%d INFO number 3", filepath.Base(file), line+1)) {
+		t.Fatalf("formatted caller: %s", buffer.String())
 	}
 	buffer.Reset()
-	err = logger.Skip(int(^uint(0)>>1)).Info(t.Context(), "no caller")
-	if err != nil || !strings.HasSuffix(buffer.String(), "{} INFO no caller\n") || logger.skip != 0 {
-		t.Fatalf("skip overflow boundary: %q, %v", buffer.String(), err)
+	logger.Skip(int(^uint(0)>>1)).Info(t.Context(), "no caller")
+	if !strings.HasSuffix(buffer.String(), "{} INFO no caller\n") || logger.skip != 0 {
+		t.Fatalf("skip overflow boundary: %q", buffer.String())
 	}
 }
 
 func wrappedLog(t *testing.T, logger *Logger) {
 	t.Helper()
-	err := logger.Skip(1).Info(t.Context(), "wrapped")
-	if err != nil {
-		t.Fatal(err)
-	}
+	logger.Skip(1).Info(t.Context(), "wrapped")
 }
 
 type explosiveStringer struct{}
@@ -98,21 +88,23 @@ func TestFilteringCancellationAndClose(t *testing.T) {
 	var buffer bytes.Buffer
 	var level slog.LevelVar
 	logger := newTestLogger(t, Options{Writer: &buffer, Level: &level})
-	err := logger.Debugf(t.Context(), "%s", explosiveStringer{})
-	if err != nil || buffer.Len() != 0 {
+	logger.Debugf(t.Context(), "%s", explosiveStringer{})
+	if buffer.Len() != 0 {
 		t.Fatal("filtered record was written")
 	}
 	level.Set(slog.LevelDebug)
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
-	err = logger.Debug(ctx, "cancelled")
-	if err != nil || !strings.Contains(buffer.String(), "DEBUG cancelled") {
+	logger.Debug(ctx, "cancelled")
+	if !strings.Contains(buffer.String(), "DEBUG cancelled") {
 		t.Fatal("cancelled context discarded")
 	}
 	derived := logger.Skip(1)
 	_ = logger.Close()
-	if !errors.Is(derived.Info(t.Context(), "closed"), os.ErrClosed) {
-		t.Fatal("derived logger did not close")
+	before := buffer.String()
+	derived.Info(t.Context(), "closed")
+	if buffer.String() != before {
+		t.Fatal("derived logger wrote after close")
 	}
 }
 
@@ -131,12 +123,14 @@ func TestErrorsAndOwnership(t *testing.T) {
 	failure := errors.New("write failure")
 	logger := newTestLogger(t, Options{Writer: failingWriter{err: failure}})
 	ctx := context.WithValue(t.Context(), "traceId", make(chan int))
-	err := logger.Info(ctx, "failed")
+	logger.Info(ctx, "failed")
+	err := logger.output(ctx, slog.LevelInfo, "failed", nil, false)
 	if !errors.Is(err, failure) || !strings.Contains(err.Error(), "traceId") {
 		t.Fatalf("missing combined error: %v", err)
 	}
 	short := newTestLogger(t, Options{Writer: failingWriter{}})
-	if !errors.Is(short.Info(t.Context(), "short"), io.ErrShortWrite) {
+	short.Info(t.Context(), "short")
+	if !errors.Is(short.output(t.Context(), slog.LevelInfo, "short", nil, false), io.ErrShortWrite) {
 		t.Fatal("short write missing")
 	}
 	var buffer closingBuffer
@@ -175,7 +169,7 @@ func TestInvalidOptionsAndPanic(t *testing.T) {
 	}
 	logger := newTestLogger(t, Options{Writer: &buffer})
 	for name, call := range map[string]func(){
-		"nil context":   func() { _ = logger.Info(nil, "invalid") },
+		"nil context":   func() { logger.Info(nil, "invalid") },
 		"negative skip": func() { logger.Skip(-1) },
 		"overflow skip": func() { logger.Skip(int(^uint(0) >> 1)).Skip(1) },
 	} {
@@ -197,10 +191,7 @@ func TestConcurrentLogger(t *testing.T) {
 	for range 8 {
 		wg.Go(func() {
 			for range 50 {
-				err := logger.Skip(0).Info(t.Context(), "concurrent")
-				if err != nil {
-					t.Error(err)
-				}
+				logger.Skip(0).Info(t.Context(), "concurrent")
 			}
 		})
 	}
@@ -213,8 +204,8 @@ func TestConcurrentLogger(t *testing.T) {
 func TestGroupEncodingErrorPreservesSiblings(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newTestLogger(t, Options{Writer: &buffer})
-	err := logger.Info(t.Context(), "encoding", slog.Group("group", slog.Any("bad", make(chan int)), slog.Int("good", 1)))
-	if err == nil || !strings.Contains(buffer.String(), `{"group":{"bad":"[json encode error]","good":1}}`) {
-		t.Fatalf("encoding discarded siblings: %q, %v", buffer.String(), err)
+	logger.Info(t.Context(), "encoding", slog.Group("group", slog.Any("bad", make(chan int)), slog.Int("good", 1)))
+	if !strings.Contains(buffer.String(), `{"group":{"bad":"[json encode error]","good":1}}`) {
+		t.Fatalf("encoding discarded siblings: %q", buffer.String())
 	}
 }
