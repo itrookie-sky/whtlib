@@ -1,154 +1,177 @@
 # logx 模块设计
 
-`logx` 位于 `extension/logx`，以 Go 标准日志库为基础，提供必须传入 `context.Context` 的日志接口，自动提取上下文字段，并支持通过 `Skip(n)` 调整日志记录的文件和行号。模块不引入第三方依赖。
+`logx` 位于 `extension/logx`，基于标准库 `log/slog`，强制传入 `context.Context`。上下文特殊字段组成有序 JSON，紧跟日期时间输出；支持源码位置回溯、Writer 注入，以及内置文件 Writer 的分割、轮转和清理。全部使用标准库，不引入 GoFrame 依赖。
 
-本文为设计稿，尚未实现。用户已明确要求 ctx、将特殊字段组装为紧跟日期时间的 JSON 对象、对象内 traceId 优先、有序自定义字段及调用位置回溯；其余接口和默认行为为本稿建议。底层暂采用 `log`，该选择尚待确认。
+已确定：使用 slog、ctx 必传、traceId 首位、有序自定义字段、Skip(n)、接收 io.Writer、提供默认文件 Writer、分割阈值和保留时长可配置、默认保留 24h。本文仍是设计稿，尚未实现；其他默认值与边界策略为建议方案。
 
-## 底层选择
+## 组件职责
 
-| 方案 | 适用情况 | 本模块的影响 |
-| --- | --- | --- |
-| `log` | 文本日志和较小的封装 | 提供时间前缀和同步写入能力，由 logx 组织字段和调用位置。 |
-| `log/slog` | 日志级别和结构化事件 | 可复用级别与属性模型，但指定的文本字段顺序需要定制 Handler。 |
+```text
+业务调用 Logger（ctx 必传）
+    → slog.Record（时间、级别、正文、业务属性、调用位置）
+    → 自定义 slog.Handler（上下文提取与日志格式化）
+    → io.Writer（外部 Writer 或内置 FileWriter）
+```
 
-两者都是标准库，无需第三方依赖。具体能力对比如下：
-
-| 能力 | `log` | `log/slog` |
-| --- | --- | --- |
-| 日志级别 | 没有内置 Debug、Info、Warn、Error 级别及过滤机制，需要封装。 | 内置级别，Handler 支持级别过滤。 |
-| 上下文 | 输出方法不接收 ctx，需要 logx 提取字段。 | 提供 InfoContext 等接口，Handler 能接收 ctx；不会自动提取 traceId，仍需扩展。 |
-| 结构化字段 | 需要自行编码。 | 支持 Attr、With、Group，以及 TextHandler 和 JSONHandler。 |
-| 调用位置 | 支持文件标志和 Output 调用深度；本格式需要自行安排位置。 | 支持 AddSource；封装方法及 Skip(n) 仍需校准 Record 的调用位置。 |
-| 指定混合格式 | 直接将上下文 JSON 和正文交给 Output，封装较少。 | 内置 JSONHandler 输出整条 JSON，TextHandler 输出键值文本；本格式需要自定义 Handler。 |
-| 输出错误 | Output 返回错误。 | Logger 常用输出方法不返回错误，需要在 Handler 层设计错误处理。 |
-
-本模块当前强调固定文本格式和较小实现，因此暂推荐 `log`。如果后续重点转向级别过滤、结构化业务字段、字段分组和多种输出格式，则 `slog` 更适合作为可扩展的基础。这是针对需求的取舍，不代表性能比较结论。
-
-能力参考：[log 官方文档](https://pkg.go.dev/log)、[slog 官方文档](https://pkg.go.dev/log/slog)。
-
-首版不加入文件轮转、异步队列、整条日志 JSON 化、第三方链路追踪集成及进程退出接口。上下文字段仍按下文编码为 JSON。这里的文件回溯指源码文件和行号，不是日志文件历史查询。
+Logger 负责入口、级别判断和调用位置；Handler 负责格式与同步输出；FileWriter 负责文件生命周期，不解析 ctx 或正文。不修改 slog 全局实例，不保存请求 ctx。首版不包含异步日志队列、进程退出接口或自动链路追踪集成。
 
 ## 输出格式
 
-每条日志按照以下顺序输出：
-
 ```text
-日期时间 {上下文字段 JSON} 文件:行号 级别 正文
+日期时间 {上下文 JSON} 文件:行号 级别 正文 [业务属性 JSON]
 ```
 
-日期时间默认使用本地时区，格式为 `YYYY/MM/DD HH:mm:ss`。上下文 JSON 对象整体占据日期时间后的第一个位置；对象内 traceId 存在时必须排第一，其余字段按照初始化配置顺序打印，不按名称排序。键和字符串值使用双引号，输出严格有效的紧凑 JSON。
+末尾业务属性 JSON 仅在传入结构化属性时输出，方括号表示可选部分，不是实际字符。
 
 ```text
-2026/10/13 14:30:00 {"traceId":"abc123","userId":1001,"tenantId":"t01"} order/service.go:42 INFO 创建订单成功
-2026/10/13 14:30:01 {"tenantId":"t01"} order/service.go:42 INFO 创建订单成功
+2026/10/13 14:30:00 {"traceId":"abc123","userId":1001} order/service.go:42 INFO 创建订单成功
+2026/10/13 14:30:01 {"userId":1001} order/service.go:42 INFO 创建订单成功 {"orderId":"o123"}
 2026/10/13 14:30:02 {} order/service.go:42 ERROR 创建订单失败
 ```
 
-缺失字段从对象中省略；没有任何有效字段时输出 `{}`，保持 JSON 块位置固定。文件位置默认取最后一级目录和文件名，支持完整路径模式。无法取得调用位置时省略该部分，继续输出日志。
+日期默认使用本地时区，格式为 YYYY/MM/DD HH:mm:ss。上下文 JSON 固定处于日期之后首位，traceId 存在时必须是对象第一个成员，其余字段按配置顺序输出。无有效字段时输出 `{}`。
 
-字段键和值由标准库 `encoding/json` 编码，负责引号、反斜杠及控制字符转义，不直接拼接原始值。正文中的换行与回车转为可见转义文本，每条记录仅以一个真实换行结束。整条日志为文本加 JSON 块的混合格式，并非完整 JSON 文档。
+键和值使用 encoding/json 编码并保留 JSON 类型，正文换行与回车转义，每条记录以一个真实换行结束。整条日志为文本与 JSON 块的混合格式，不是完整 JSON 文档。
 
-JSON 对象在语义上无顺序，但本模块保证输出文本中的顶层成员顺序。使用有序字段切片逐项编码键和值并组装对象，不把整个字段集合放入 map 后编码，以免成员顺序改变；嵌套对象不额外保证业务定义的顺序。
+JSON 对象语义上无顺序，但本模块保证顶层 context 成员的输出顺序。使用有序切片逐项编码键和值，不把全部字段放入 map；嵌套对象不额外保证业务顺序。
 
-## 配置和接口
+## Logger 配置和接口
 
-使用实例化 Logger，不修改标准库全局 logger。构造函数 `New` 接收 `Options`，返回 Logger 和配置错误。
+New 接收 Options，返回 Logger 和初始化错误。构造时复制字段切片并校验配置，之后保持只读；动态级别可使用 slog.LevelVar。
 
 | 配置项 | 默认值 | 含义 |
 | --- | --- | --- |
-| `Writer` | `os.Stderr` | 输出目标，支持调用方传入文件等 `io.Writer`；文件的打开和关闭由调用方管理。 |
-| `TraceKey` | 字符串 `traceId` | 从 ctx 读取 traceId 使用的 key；输出名称固定为 `traceId`。 |
-| `ContextFields` | 空切片 | 按顺序配置上下文字段，每项包含输出名称 `Name` 与读取键 `Key`。 |
-| `Skip` | `0` | 在业务直接调用位置基础上额外跳过的调用层数。 |
-| `FullPath` | `false` | 是否打印源码文件完整路径。 |
+| Writer | nil | 接收 io.Writer；非 nil 使用外部 Writer，nil 创建内置 FileWriter，typed nil 返回错误。 |
+| File | 默认文件配置 | FileOptions，仅未传 Writer 时使用。 |
+| Level | slog.LevelInfo | 接收 slog.Leveler，过滤低于阈值的日志。 |
+| TraceKey | 字符串 traceId | 从 ctx 读取 traceId 的 key，输出名称固定为 traceId。 |
+| ContextFields | 空切片 | 每项包含输出名称 Name 与读取键 Key，按切片顺序输出。 |
+| Skip | 0 | 在业务调用位置基础上额外跳过的层数。 |
+| FullPath | false | 默认显示最后一级目录及文件名；true 输出完整路径。 |
 
-`TraceKey` 和字段 `Key` 支持可比较的自定义类型，调用者可复用业务已有的 context key。默认字符串 key 用于兼容约定，不要求业务以字符串 key 写入 ctx。
-
-建议首版提供以下方法，所有输出方法的首个参数均为 `context.Context`：
+context key 支持可比较的自定义类型。TraceKey 未设置时使用默认值；字段 Key 不允许 nil；不可比较或 typed nil 的 key 返回错误。字段名限定 ASCII 字母或下划线开头，后续为字母、数字或下划线，拒绝重复名称及保留名称 traceId。
 
 | 方法 | 行为 |
 | --- | --- |
-| `Debug`、`Info`、`Warn`、`Error` | 接收 ctx、正文及可变参数，按 `fmt.Sprint` 语义组合正文，返回写入错误。 |
-| `Debugf`、`Infof`、`Warnf`、`Errorf` | 接收 ctx、格式字符串及可变参数，按 `fmt.Sprintf` 语义组合正文，返回写入错误。 |
-| `Skip(n)` | 返回额外跳过 n 层调用的派生 Logger，不执行日志输出。 |
+| Debug、Info、Warn、Error | 接收 ctx、消息及可变结构化属性，返回错误。 |
+| Log | 接收 ctx、slog.Level、消息及结构化属性，返回错误。 |
+| Debugf、Infof、Warnf、Errorf | 接收 ctx、格式串及参数，以 fmt.Sprintf 生成正文，返回错误。 |
+| Skip(n) | 返回额外跳过 n 层调用的派生 Logger。 |
+| Close | 关闭共享实例体系，仅释放 Logger 自己创建的内置 Writer。 |
 
-级别用于标识日志，首版全部输出，不引入运行时级别过滤。仅方法内部读取 ctx，不在 Logger 实例中保存请求 ctx。没有请求上下文时，调用者显式传入 `context.Background()`。
+普通方法遵循 slog 的消息加属性模型，可变参数不再以 fmt.Sprint 拼接正文；格式化文本使用带 f 方法。业务属性在行尾独立输出，不能覆盖日期后的 context JSON。
 
-## 上下文字段提取
+所有输出方法要求非 nil ctx，nil 直接 panic；无请求上下文时显式传 context.Background()。ctx 取消不阻止日志输出。Writer.Write 和资源关闭接口不要求 ctx。
 
-每次输出先读取 `TraceKey`，再依次读取 `ContextFields`，不遍历或猜测 ctx 中其他 key。模块不自动生成 traceId，也不回写 ctx。
+logx 先调用 Handler.Enabled，过滤后的日志不提取字段、不解析栈、不格式化正文。使用 slog.NewRecord 构造 Record，再调用 Handler.Handle 并返回其错误，不经会丢弃 Handler 错误的 slog.Logger 常用输出方法转发。
 
-字段值为 `nil`、typed nil 或空字符串时省略；数值 `0` 和布尔值 `false` 保留。保留可编码值的 JSON 类型，例如字符串 userId 输出为 `"1001"`，整数 userId 输出为 `1001`，不统一转换为字符串。复合值遵循 encoding/json 的编码规则。
+Handler 完整实现 Enabled、Handle、WithAttrs、WithGroup，遵循值解析、空属性、空组和嵌套分组约定。派生 Handler 共享输出锁，属性配置只读。Record 时间或 PC 为零时，分别省略时间或源码位置。
 
-字段编码失败时，将该字段值替换为 JSON 字符串 `"[json encode error]"`，继续输出其他字段和正文，并返回带字段名的编码错误；如果同时发生写入错误，使用 `errors.Join` 合并。该处理适用于编码器返回错误的情况，不主动恢复用户自定义 MarshalJSON 方法内部的 panic。
+## 上下文字段
 
-配置字段使用切片保存顺序。构造时复制切片，之后配置不可变；调用方不得并发修改 ctx 中字段值引用的对象。自定义字段名限定为 ASCII 字母或下划线开头，后续允许字母、数字和下划线，以保持日志格式明确。
+每次先读取 TraceKey，再读取 ContextFields，不遍历或猜测其他 key，不生成 traceId、不回写 ctx。业务可将外部追踪系统的 traceId 放入约定 key。
 
-初始化时拒绝重复字段名、名为 `traceId` 的自定义字段、空字段名、nil 字段 key 和不可比较的 key。`TraceKey` 未设置时使用默认值，显式传入不可比较或 typed nil 的 key 返回配置错误。
+nil、typed nil 和空字符串省略；0 与 false 保留，其余值按标准 JSON 规则编码。调用方不得在输出期间并发修改字段引用的对象。
 
-## 调用位置和 Skip
+某字段编码失败时，替换成 JSON 字符串 `"[json encode error]"`，继续输出并返回带字段名的错误；同时写入失败时通过 errors.Join 合并。用户自定义 MarshalJSON 内部的 panic 不主动恢复。
 
-默认配置下，`Skip(0)` 定位业务直接调用日志输出方法的位置，logx 自身的内部封装层不计入用户配置。初始化的 `Skip` 与链式调用的 `Skip(n)` 累加；`Skip(0)` 表示不额外跳过，不会重置已有 skip。下表示例均以初始化 `Skip=0` 为前提。
+## 调用位置与 Skip
 
-| 调用方式 | 记录的位置 |
-| --- | --- |
-| 业务直接调用 `logger.Info(ctx, ...)` | 当前业务文件的日志调用行。 |
-| 业务封装函数内部调用 `logger.Skip(1).Info(ctx, ...)` | 该封装函数的上层调用行。 |
-| 依次调用 `Skip(1).Skip(1)` | 在实例默认值上额外跳过两层。 |
+默认配置下 Skip(0) 指向业务直接调用行，内部封装层自动跳过。初始化 Skip 与链式 Skip(n) 累加，Skip(0) 不重置已有数值。封装函数使用 Skip(1) 定位其上层调用者。
 
-构造配置中的负数 Skip 返回错误；`Skip(n)` 的负数参数或累加溢出属于编程错误，直接 panic。正数超出调用栈时省略调用位置，不 panic。
+初始化负数 Skip 返回错误；链式负数或累加溢出 panic。超出调用栈时 PC 为零，省略位置。派生 Logger 不修改原实例，复用 Handler 与资源状态。
 
-派生 Logger 只保存自己的 skip 数值，复用原实例的只读配置和底层 `*log.Logger`。原实例不会被修改，并发请求之间不会互相改变调用位置。
+通过 runtime.Callers 和 runtime.CallersFrames 正确处理内联帧，分别校准普通、格式化及 Log 方法的内部深度。调用位置在 Logger 内写入 Record.PC，Handler 不重新猜测调用方。
 
-建议使用 `runtime.Callers` 和 `runtime.CallersFrames` 解析调用栈，正确处理内联帧。固定内部入口，分别校准普通方法与格式化方法的内部层数，不通过业务函数名猜测跳过范围。调用栈缓冲区按需增长并设置合理上限，不按用户传入的 n 直接分配内存。
+## Writer 注入与生命周期
 
-## 写入流程与错误处理
+传入外部 Writer 时，不创建日志目录、不启动轮转或清理，也不关闭外部 Writer。需要同时写文件和终端时，调用方可创建 FileWriter，使用 io.MultiWriter 组合后传入，并自行管理生命周期。
 
-1. 检查 ctx 非 nil；传入 nil 时直接 panic，要求调用方显式表达空上下文。
-2. 提取 traceId 及有序自定义字段，编码为一个紧凑 JSON 对象。
-3. 按实例默认 skip 和派生 skip 解析调用位置。
-4. 格式化级别、正文及字段，组成一条完整记录。
-5. 调用底层 `log.Logger.Output` 写入，向调用者返回写入错误。
+未传 Writer 时，New 创建默认 FileWriter，目录或文件不可写立即返回错误。Logger.Close 停止维护任务并关闭自有文件，重复调用安全；关闭后所有派生 Logger 的输出返回 os.ErrClosed。
 
-底层仅开启 `log.Ldate | log.Ltime`，不启用标准库源码位置标志，避免源码位置先于上下文 JSON 或重复出现。上下文 JSON、位置、级别与正文组成 Output 的输入，由标准库在前面添加日期时间。
+FileWriter 可通过 NewFileWriter 独立创建，实现 io.WriteCloser，另提供 Rotate、Cleanup、Sync。Close 等待维护任务退出，释放文件，不额外归档。普通写入不承诺每条日志 fsync，调用方可显式 Sync。
 
-ctx 被取消或超时不阻止日志记录，错误处理和清理阶段仍可以输出日志。写入失败不递归记录日志，也不自动回退到其他目标；自定义 Writer 返回短写但没有错误时，将其转换为 `io.ErrShortWrite`。
+## 文件配置与默认值
 
-每条记录一次提交给底层 logger。原实例和派生实例共享底层写入锁，避免同一实例体系的并发输出互相穿插。多个独立 Logger 共享同一 Writer 时，调用方需要提供并发安全的 Writer。
+所有分割阈值、轮转周期、保留时长和清理周期均可传入。提供 DefaultFileOptions 返回完整默认值，零值按下表处理。
+
+| 字段 | 类型 | 默认值 | 语义 |
+| --- | --- | --- | --- |
+| Path | string | ./logs | 日志目录，构造时解析为绝对路径并创建。 |
+| File | string | app.log | 活动文件名，要求 .log 后缀，不允许路径分隔符。 |
+| RotateSize | int64 | 100 × 1024 × 1024 | 字节，正数为分割阈值，0 使用默认值，-1 禁用大小分割。 |
+| RotateInterval | time.Duration | 24h | 自本轮开始的最大写入时长，0 使用默认值，-1 禁用时间轮转。 |
+| RotateBackupExpire | time.Duration | 24h | 归档保留时长，0 使用默认值，-1 禁用按时间清理。 |
+| RotateBackupLimit | int | 0 | 正数限制归档数量，0 不按数量限制。 |
+| RotateCheckInterval | time.Duration | 1m | 后台轮转与清理检查间隔，0 使用默认值。 |
+| OnError | func(error) | 向 os.Stderr 输出诊断 | 接收后台轮转和清理错误。 |
+
+除明确允许的 -1 哨兵值外，负数配置返回错误。大小使用字节数，时长使用 time.Duration，首版不实现单位字符串解析或配置文件读取。
+
+默认保留 24h 指归档产生后保留 24 小时，并非逐条日志的存活时间。轮转周期与归档保留时间相互独立；较早写入的记录会额外经历活动文件阶段。过期清理存在最多约一个检查周期的调度延迟，不承诺到期瞬间删除。
+
+## 分割与轮转
+
+活动文件为 app.log，归档格式为 `app.<UTC轮转时间>.<唯一标识>.log`。时间精确到纳秒，唯一标识由标准库生成，发生名称冲突时重新生成，不覆盖归档。首版不压缩。
+
+Write 在锁内检查非空活动文件：若写入后会超过 RotateSize，或距本轮开始达到 RotateInterval，先轮转再写入。一次 Write 不拆到两个文件；单条日志自身超过阈值时允许单文件暂时超限，下一条写入再轮转。零长度 Write 不触发轮转。
+
+后台任务即使没有新日志也检查时间轮转，但不轮转空文件。轮转周期不因持续写入而重置。重启时根据已有活动文件修改时间保守恢复本轮起点，继续追加，不截断已有内容。
+
+轮转持有 Writer 锁，关闭活动文件、改名归档、再以追加模式打开活动文件。关闭或改名失败时尝试恢复活动文件并返回错误；新文件打开失败时保留归档，后续 Write 可重试打开。按实际写入字节数更新大小，短写返回 io.ErrShortWrite，不自动重试整条记录。
+
+Write、Rotate、Cleanup、后台维护和 Close 使用统一同步状态。首版不支持多个进程或多个独立 FileWriter 操作同一活动文件；不同进程使用不同目录或文件名。同一进程内可显式共享 FileWriter。
+
+## 自动清理
+
+初始化、轮转后及后台周期检查时执行清理。只扫描当前 Path 的直接子文件，精确匹配当前 File 的归档命名规则；跳过目录、符号链接、活动文件、不合法名称及其他日志前缀，不递归清理。
+
+先按归档时间删除过期文件，再按 RotateBackupLimit 从旧到新删除多余归档。活动文件不计入数量。历史归档清理不依赖当前是否启用轮转。
+
+清理失败不回滚成功的写入或轮转。后台错误交给 OnError，回调在文件锁外执行，不通过当前 logger 递归记录，也不允许在维护任务回调内调用 Close 等待自身退出。手动 Cleanup 直接返回错误。
+
+进程停止期间不执行维护，下次初始化补做清理。Close 停止 ticker 并等待 goroutine 退出，避免资源泄漏。
+
+## GoFrame 参考与差异
+
+参考 glog 的 Writer 扩展点，以及按大小分割、归档数量、保留时长和检查周期的配置划分。GoFrame 的 RotateExpire 依据文件未修改时长；本模块使用 RotateInterval 表达固定轮转周期，避免同名不同义。
+
+本模块 RotateBackupExpire 默认 24h，零值使用默认值；RotateBackupLimit 为 0 表示不按数量限制。这是 logx 自身定义，不承诺兼容 GoFrame 零值语义。首版不包含归档压缩、Cat、自动追踪接入或 GoFrame 配置系统。
+
+参考资料：[GoFrame Rotate 特性](https://goframe.org/docs/core/glog-rotate)、[GoFrame Writer 接口](https://goframe.org/docs/core/glog-writer)、[Go slog](https://pkg.go.dev/log/slog)。
 
 ## 文件职责
 
-以下为计划中的文件，编写本设计文档不会创建这些实现文件。
-
 ```text
 extension/logx/
-├── logx.go       # Logger、构造函数和日志输出入口
-├── options.go    # 配置定义、默认值和校验
-├── context.go    # 上下文字段提取与有序 JSON 编码
-└── caller.go     # 调用栈解析和文件路径显示
+├── logx.go          # Logger 入口、Record、派生实例和关闭
+├── options.go       # Logger 配置与校验
+├── handler.go       # slog.Handler 与固定输出格式
+├── context.go       # ctx 提取与有序 JSON
+├── caller.go        # 调用位置解析
+├── file_writer.go   # 文件配置、写入与生命周期
+└── rotate.go        # 轮转、归档识别与清理
 ```
+
+以上为实施规划，当前仅有设计文档。
 
 ## 验收标准
 
 | 场景 | 预期 |
 | --- | --- |
-| ctx 同时具有 traceId 和多个字段 | JSON 对象紧跟日期时间；对象内 traceId 第一，其他字段严格按配置顺序输出。 |
-| 部分字段缺失 | 跳过缺失项，其余字段顺序不变。 |
-| 所有字段缺失 | 日期时间后输出 `{}`。 |
-| 字段值为 nil、typed nil、空字符串、0、false | 前三者省略，后两者保留。 |
-| 字段值包含字符串、数字、布尔值或复合值 | JSON 类型保留，JSON 块能够独立解码。 |
-| 某个字段无法编码为 JSON | 用错误标记字符串替代该值，日志继续输出并返回编码错误。 |
-| 使用自定义类型 key | 能读取对应字段，不依赖字符串 key 类型断言。 |
-| ctx 已取消 | 仍然输出日志。 |
-| ctx 为 nil | 明确 panic。 |
-| 普通和格式化输出、默认 skip、额外 skip、链式 skip | 文件及行号对应约定的业务调用位置，包括编译器内联场景。 |
-| skip 超出调用栈 | 日志仍输出，省略文件位置。 |
-| 多个派生 Logger 并发输出 | 原实例 skip 不变，记录不交错。 |
-| 字段或正文包含换行、空白或引号 | 输出保持单条单行且边界明确。 |
-| 非法配置或 Writer 写入失败 | 返回对应错误；负数链式 Skip 及累加溢出 panic。 |
+| traceId 与自定义字段齐全或部分缺失 | 日期后 JSON 有效，traceId 第一，其余按配置顺序；全缺失输出 {}。 |
+| nil、typed nil、空字符串、0、false | 前三者省略，后两者保留 JSON 类型。 |
+| 编码失败 | 输出标记并保留日志，返回编码错误。 |
+| ctx 取消或为 nil | 取消仍输出，nil panic。 |
+| 级别过滤 | 不进行字段提取、格式化或写入。 |
+| 普通、格式化及 Log 方法的 Skip | 业务行号正确，覆盖内联与叠加 skip，越界省略位置。 |
+| 外部 Writer | 不创建文件或维护任务，不关闭外部资源。 |
+| 默认或自定义文件配置 | 默认保留 24h，传入阈值、周期、保留时间均生效。 |
+| 大小分割、时间轮转及空闲维护 | 不拆分记录、不反复归档空文件。 |
+| 重启、归档名冲突及超大单条日志 | 不截断旧数据、不覆盖归档、不拆分单条记录。 |
+| 过期及数量超限 | 只删除当前日志归档，不影响活动文件和其他文件。 |
+| 并发写入、轮转、清理和关闭 | 记录不交错，不访问已关闭句柄，派生实例共享关闭状态。 |
+| 写入、后台维护或短写错误 | 返回错误或调用 OnError，不递归记录，不误报成功。 |
+| 重复 Close | 资源已释放，调用安全。 |
 
-实现阶段先进行模块构建和格式检查；新增自动化测试按项目规则在用户明确授权后执行。以上场景是行为验收要求，不代表当前已有实现或测试通过。
-
-## 实施前确认
-
-底层使用传统 `log` 还是 `log/slog` 尚未确定。本稿推荐 `log`，其余默认配置与接口以本文方案供评审；确定底层后再进入实现。
+实现阶段进行模块构建、格式检查与必要验证；新增测试文件按项目规则需要用户明确授权。上述为验收要求，不代表已有实现或测试通过。
