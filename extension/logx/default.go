@@ -6,7 +6,7 @@ import (
 )
 
 // 包加载仅建立实例，不打开文件或启动维护任务。
-var defaultLogger = &Logger{core: &loggerCore{}}
+var defaultLogger, _ = New(Config{})
 
 // Default 返回全局单例，首次打印或设置配置时初始化输出资源。
 func Default() (logger *Logger) {

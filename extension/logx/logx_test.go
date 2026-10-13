@@ -17,6 +17,7 @@ import (
 )
 
 type testKey int
+type testCtxKey string
 
 func newTestLogger(t *testing.T, config Config) (logger *Logger) {
 	t.Helper()
@@ -312,4 +313,18 @@ func TestTimestampMilliseconds(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestLogInfo(t *testing.T) {
+	traceKey := testCtxKey("tranceId")
+	ctx := context.WithValue(context.TODO(), traceKey, "321")
+	logger, err := New(Config{
+		WriteFile: true,
+		Level:     slog.LevelDebug,
+		TraceKey:  traceKey,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	logger.Debug(ctx, "hello world")
 }
