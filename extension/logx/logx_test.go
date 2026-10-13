@@ -67,7 +67,7 @@ func TestContextAndAttributes(t *testing.T) {
 	ctx = context.WithValue(ctx, testKey(6), (*int)(nil))
 	logger.Info(ctx, "created\norder", "orderId", "o1")
 	line := buffer.String()
-	if !strings.HasPrefix(line[24:], `{"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "INFO created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
+	if !strings.HasPrefix(line[31:], `{"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "INFO created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
 		t.Fatalf("unexpected record: %q", line)
 	}
 }
@@ -305,7 +305,7 @@ func TestTimestampMilliseconds(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := tc.timestamp + " {} INFO timestamp\n"
+			expected := tc.timestamp + " " + record.Time.Local().Format("-07:00") + " {} INFO timestamp\n"
 			if buffer.String() != expected {
 				t.Fatalf("want %q, got %q", expected, buffer.String())
 			}

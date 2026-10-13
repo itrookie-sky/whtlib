@@ -104,7 +104,7 @@ func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 	contextData, err := contextJSON(ctx, h.config)
 	var line strings.Builder
 	if !record.Time.IsZero() {
-		line.WriteString(record.Time.Local().Format("2006-01-02 15:04:05.000"))
+		line.WriteString(record.Time.Local().Format("2006-01-02 15:04:05.000 -07:00"))
 		line.WriteByte(' ')
 	}
 	line.Write(contextData)
