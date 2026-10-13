@@ -27,7 +27,7 @@ type Config struct {
 	FullPath      bool
 }
 
-var fieldNamePattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+var fieldNamePattern = regexp.MustCompile(`^[A-Za-z_-][A-Za-z0-9_-]*$`)
 
 func isNil(v any) (result bool) {
 	if v == nil {

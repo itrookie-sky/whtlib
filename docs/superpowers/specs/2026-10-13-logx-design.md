@@ -49,7 +49,7 @@ New 接收 Config，返回 Logger 和初始化错误。构造时复制字段切�
 | Skip | 0 | 在业务调用位置基础上额外跳过的层数。 |
 | FullPath | false | 默认显示最后一级目录及文件名；true 输出完整路径。 |
 
-context key 支持可比较的自定义类型。TraceKey 未设置时使用默认值；字段 Key 不允许 nil；不可比较或 typed nil 的 key 返回错误。字段名限定 ASCII 字母或下划线开头，后续为字母、数字或下划线，拒绝重复名称及保留名称 traceId。
+context key 支持可比较的自定义类型。TraceKey 未设置时使用默认值；字段 Key 不允许 nil；不可比较或 typed nil 的 key 返回错误。字段名限定 ASCII 字母、下划线或连字符（-）开头，后续为字母、数字、下划线或连字符，拒绝重复名称及保留名称 traceId。
 
 | 方法 | 行为 |
 | --- | --- |
