@@ -71,7 +71,7 @@ func TestContextAndAttributes(t *testing.T) {
 	ctx = context.WithValue(ctx, testKey(6), (*int)(nil))
 	NewLogAcc(WithLogger(logger)).Info(ctx, "created\norder", "orderId", "o1")
 	line := buffer.String()
-	if !strings.Contains(line, ` {traceId:a\"\nb,userId:123,zero:0,false:false} `) || !strings.HasSuffix(line, "created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
+	if !strings.HasPrefix(line[31:], `{"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "INFO created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
 		t.Fatalf("unexpected record: %q", line)
 	}
 }
