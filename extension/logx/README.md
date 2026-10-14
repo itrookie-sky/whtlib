@@ -161,3 +161,36 @@ defer wrapped.Close()
 同一目录、同一表达式共享 Writer。不同表达式（包括固定文件名）若可能生成相同名称，保守拒绝同时启用，即使当前日期尚未冲突；修改路径或使用不同业务前缀可避免冲突。
 
 按大小或时间轮转的归档，以展开后的日期文件名作为前缀。清理同时匹配当前表达式的历史日期文件和归档：历史日期文件从最后修改时间计算保留期，归档从归档名称中的时间计算；两者合计应用保留数量。当前打开文件和当天目标文件不删除。默认保留 24h。
+
+## LogAcc 累积日志字段
+
+`LogAcc` 参考 LogContext 的用法，内部使用锁保护的私有 map，不依赖 GoFrame。字段按键排序输出为日志末尾的结构化 JSON，ctx 特殊字段仍在时间后输出。
+
+```go
+acc := logx.NewLogAcc() // 默认使用全局 Logger
+acc.SetValue("orderId", "o123")
+acc.Update(map[string]any{"status": "created", "count": 1})
+acc.Info(ctx, "创建订单", "status", "done", "count", 2)
+```
+
+指定实例和耗时起点使用闭包选项：
+
+```go
+acc := logx.NewLogAcc(logx.WithLogger(logger), logx.WithCost(time.Now()))
+acc.SetValue("userId", 1001).Update(map[string]any{"action": "save"})
+acc.Info(ctx, "保存完成")
+```
+
+`SetValue` 覆盖单个字段，`Update` 原子合并多个字段，均返回原累积器。Info/Debug/Warn/Error 的额外参数为 `key, value` 对，覆盖后的字段继续保留供后续打印使用；奇数参数或非 string key 会 panic，整批校验失败不会部分写入。所有打印方法必须传 ctx，无错误返回。
+
+`SetErr(*error)` 在调用时读取错误，保存 `err.Error()` 到 `err` 字段；nil 指针或 nil 错误不修改已有字段。不解析 GoFrame 错误码。例如在有命名返回值 err 的函数中：
+
+```go
+acc := logx.NewLogAcc()
+defer acc.Info(ctx, "处理完成")
+defer acc.SetErr(&err) // defer 逆序执行，先保存最终错误再打印。
+```
+
+`Skip(n)` 累加调用跳过层数，返回原累积器；内部已跳过自身封装层，直接调用 Info 无需手动 Skip。`WithCost` 为消息增加 `[耗时]` 前缀。
+
+累积器不拥有 Logger，不需要 Close，也不会每次打印创建派生 Logger；注入实例由调用方负责关闭。零值 LogAcc 可用，默认使用全局 Logger。使用后不要复制 LogAcc 结构体。并发安全范围是 map 字段的更新与快照，不包括字段值引用的可变对象；外部 map/slice/指针以及传给 SetErr 的 error 变量仍需调用方同步。快照完成后释放锁再编码、写入日志。
