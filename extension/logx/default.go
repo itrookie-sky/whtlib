@@ -6,7 +6,15 @@ import (
 )
 
 // 包加载仅建立实例，不打开文件或启动维护任务。
-var defaultLogger, _ = New(Config{})
+var defaultLogger *Logger
+
+func init() {
+	var err error
+	defaultLogger, err = New(Config{})
+	if err != nil {
+		panic("logx: defaultLogger init failed")
+	}
+}
 
 // Default 返回全局单例，首次打印或设置配置时初始化输出资源。
 func Default() (logger *Logger) {

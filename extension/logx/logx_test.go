@@ -319,7 +319,7 @@ func TestTimestampMilliseconds(t *testing.T) {
 
 func TestLogInfo(t *testing.T) {
 	traceKey := testCtxKey("traceId")
-	ctx := context.WithValue(context.TODO(), "traceId", "321")
+	ctx := context.WithValue(context.TODO(), traceKey, "321")
 	logger, err := New(Config{
 		WriteFile: true,
 		Level:     slog.LevelDebug,

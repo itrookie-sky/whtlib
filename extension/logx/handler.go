@@ -123,7 +123,8 @@ func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 		}
 	}
 	line.WriteByte(' ')
-	line.WriteString(record.Level.String())
+	lev := "[" + record.Level.String() + "]"
+	line.WriteString(lev)
 	line.WriteByte(' ')
 	line.WriteString(lineEscaper.Replace(record.Message))
 	var fields []jsonField
