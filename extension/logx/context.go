@@ -57,11 +57,29 @@ func appendContextField(ctx context.Context, fields []jsonField, name string, ke
 	return append(fields, jsonField{name: name, value: value})
 }
 
-func contextJSON(ctx context.Context, config Config) (data []byte, err error) {
+func contextText(ctx context.Context, config Config) (data []byte, err error) {
 	fields := make([]jsonField, 0, 1+len(config.ContextFields))
 	fields = appendContextField(ctx, fields, "traceId", config.TraceKey)
 	for _, field := range config.ContextFields {
 		fields = appendContextField(ctx, fields, field.Name, field.Key)
 	}
-	return encodeFields(fields)
+	data = append(data, '{')
+	for i, field := range fields {
+		if i > 0 {
+			data = append(data, ',')
+		}
+		data = append(data, field.name...)
+		data = append(data, ':')
+		value, encodeErr := json.Marshal(field.value)
+		if encodeErr != nil {
+			err = errors.Join(err, fmt.Errorf("logx: encode %q: %w", field.name, encodeErr))
+			value = []byte("[json encode error]")
+		} else if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+			// 仅移除字符串外围引号，保留换行等转义，避免一条日志跨行。
+			value = value[1 : len(value)-1]
+		}
+		data = append(data, value...)
+	}
+	data = append(data, '}')
+	return
 }

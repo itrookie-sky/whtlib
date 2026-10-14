@@ -101,7 +101,7 @@ func appendGrouped(fields []jsonField, groups []string, values []jsonField) (res
 var lineEscaper = strings.NewReplacer("\r", `\r`, "\n", `\n`)
 
 func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
-	contextData, err := contextJSON(ctx, h.config)
+	contextData, err := contextText(ctx, h.config)
 	var line strings.Builder
 	if !record.Time.IsZero() {
 		line.WriteString(record.Time.Local().String())

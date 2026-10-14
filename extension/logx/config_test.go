@@ -35,13 +35,13 @@ func TestSetConfigRetainsValuesAndIdentity(t *testing.T) {
 	derived.Debug(ctx, "filtered")
 	logger.SetConfig(Config{WriteFile: true}).Debug(ctx, "retained")
 	output := logContents(t, path)
-	if strings.Contains(output, "filtered") || !strings.Contains(output, `{"traceId":"trace","userId":42}`) {
+	if strings.Contains(output, "filtered") || !strings.Contains(output, `{traceId:trace,userId:42}`) {
 		t.Fatal(output)
 	}
 	logger.SetConfig(Config{WriteFile: true, ContextFields: []ContextField{}}).Info(ctx, "cleared")
 	derived.Info(ctx, "unchanged")
 	output = logContents(t, path)
-	if !strings.Contains(output, `{"traceId":"trace"}`) || !strings.Contains(output, "INFO unchanged") {
+	if !strings.Contains(output, `{traceId:trace}`) || !strings.Contains(output, "INFO unchanged") {
 		t.Fatal(output)
 	}
 	fields := []ContextField{{Name: "other", Key: testKey(2)}}

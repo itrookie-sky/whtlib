@@ -12,11 +12,11 @@ func TestContextFieldHyphens(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			data, err := contextJSON(context.WithValue(t.Context(), "user", 42), config)
+			data, err := contextText(context.WithValue(t.Context(), "user", 42), config)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if string(data) != `{"`+name+`":42}` {
+			if string(data) != `{`+name+`:42}` {
 				t.Fatalf("unexpected fields: %s", data)
 			}
 		})
