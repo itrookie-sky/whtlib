@@ -268,3 +268,20 @@ func TestLogAccDeferredDebugSkip(t *testing.T) {
 		t.Fatalf("deferred caller or final response incorrect: %s", buffer.String())
 	}
 }
+
+func TestLogAccInfo(t *testing.T) {
+	traceKey := testCtxKey("traceId")
+	ctx := context.WithValue(t.Context(), traceKey, "123321")
+	output, err := New(Config{TraceKey: traceKey})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer output.Close()
+	logger := NewLogAcc(WithLogger(output), WithCost(time.Now()))
+	defer logger.Info(ctx, "TestLogAccInfo")
+	logger.SetValue("a", 123)
+	logger.Update(map[string]any{
+		"b": 456,
+		"c": true,
+	})
+}
