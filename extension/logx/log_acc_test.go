@@ -270,17 +270,11 @@ func TestLogAccDeferredDebugSkip(t *testing.T) {
 }
 
 func TestLogAccInfo(t *testing.T) {
-	traceKey := testCtxKey("traceId")
-	ctx := context.WithValue(t.Context(), traceKey, "123321")
-	output, err := New(Config{TraceKey: traceKey})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer output.Close()
-	logger := NewLogAcc(WithLogger(output), WithCost(time.Now()))
-	defer logger.Info(ctx, "TestLogAccInfo")
-	logger.SetValue("a", 123)
-	logger.Update(map[string]any{
+	ctx := context.WithValue(t.Context(), "traceId", "123321")
+	lacc := NewLogAcc(WithCost(time.Now()))
+	defer lacc.Info(ctx, "TestLogAccInfo")
+	lacc.SetValue("a", 123)
+	lacc.Update(map[string]any{
 		"b": 456,
 		"c": true,
 	})

@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+type CtxKey string
+
 // Logger 提供必须传入 ctx 的日志方法，各实例独立保存配置与关闭状态。
 // 打印方法不返回错误，编码和写入错误连同调用堆栈直接输出到 stderr。
 type Logger struct {

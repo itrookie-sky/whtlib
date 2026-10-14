@@ -44,11 +44,13 @@ func (w *lockedTestWriter) Write(p []byte) (n int, err error) {
 	defer w.mu.Unlock()
 	return w.writer.Write(p)
 }
+
 func newBufferedLogger(t *testing.T, writer io.Writer, config Config) (logger *Logger) {
 	logger = newTestLogger(t, config)
 	logger.core.handler.state.writer = &lockedTestWriter{writer: writer}
 	return
 }
+
 func testSkip(t *testing.T, logger *Logger, n int) (derived *Logger) {
 	derived = logger.Skip(n)
 	t.Cleanup(func() { _ = derived.Close() })
@@ -316,8 +318,8 @@ func TestTimestampMilliseconds(t *testing.T) {
 }
 
 func TestLogInfo(t *testing.T) {
-	traceKey := testCtxKey("tranceId")
-	ctx := context.WithValue(context.TODO(), traceKey, "321")
+	traceKey := testCtxKey("traceId")
+	ctx := context.WithValue(context.TODO(), "traceId", "321")
 	logger, err := New(Config{
 		WriteFile: true,
 		Level:     slog.LevelDebug,
