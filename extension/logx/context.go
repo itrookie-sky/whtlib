@@ -44,22 +44,24 @@ func encodeFields(fields []jsonField) (data []byte, err error) {
 	return
 }
 
+// appendContextField 读取上下文字段，忽略 nil 和空字符串。
+func appendContextField(ctx context.Context, fields []jsonField, name string, key any) (result []jsonField) {
+	value := ctx.Value(key)
+	if isNil(value) {
+		return fields
+	}
+	rv := reflect.ValueOf(value)
+	if rv.Kind() == reflect.String && rv.Len() == 0 {
+		return fields
+	}
+	return append(fields, jsonField{name: name, value: value})
+}
+
 func contextJSON(ctx context.Context, config Config) (data []byte, err error) {
 	fields := make([]jsonField, 0, 1+len(config.ContextFields))
-	add := func(name string, key any) {
-		value := ctx.Value(key)
-		if isNil(value) {
-			return
-		}
-		rv := reflect.ValueOf(value)
-		if rv.Kind() == reflect.String && rv.Len() == 0 {
-			return
-		}
-		fields = append(fields, jsonField{name: name, value: value})
-	}
-	add("traceId", config.TraceKey)
+	fields = appendContextField(ctx, fields, "traceId", config.TraceKey)
 	for _, field := range config.ContextFields {
-		add(field.Name, field.Key)
+		fields = appendContextField(ctx, fields, field.Name, field.Key)
 	}
 	return encodeFields(fields)
 }
