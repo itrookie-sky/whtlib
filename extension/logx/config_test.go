@@ -41,7 +41,7 @@ func TestSetConfigRetainsValuesAndIdentity(t *testing.T) {
 	logger.SetConfig(Config{WriteFile: true, ContextFields: []ContextField{}}).Info(ctx, "cleared")
 	derived.Info(ctx, "unchanged")
 	output = logContents(t, path)
-	if !strings.Contains(output, `{"traceId":"trace"}`) || !strings.Contains(output, "INFO unchanged") {
+	if !strings.Contains(output, `{"traceId":"trace"}`) || !strings.Contains(output, "[INFO] unchanged") {
 		t.Fatal(output)
 	}
 	fields := []ContextField{{Name: "other", Key: testKey(2)}}
@@ -194,7 +194,7 @@ func TestDefaultSingletonAndCallers(t *testing.T) {
 	}
 	_, file, line, _ := runtime.Caller(0)
 	Info(t.Context(), "global")
-	if !strings.Contains(logContents(t, path), filepath.Base(file)+":"+strconv.Itoa(line+1)+" INFO global") {
+	if !strings.Contains(logContents(t, path), filepath.Base(file)+":"+strconv.Itoa(line+1)+" [INFO] global") {
 		t.Fatal("wrong caller")
 	}
 	for _, output := range []func(context.Context, string, ...any){Debug, Info, Warn, Error, Debugf, Infof, Warnf, Errorf} {
@@ -298,7 +298,7 @@ func TestConcurrentReopenAndRelease(t *testing.T) {
 		})
 	}
 	wg.Wait()
-	if strings.Count(logContents(t, path), "INFO reopen\n") != 160 {
+	if strings.Count(logContents(t, path), "[INFO] reopen\n") != 160 {
 		t.Fatal("reopen lost records")
 	}
 	sharedFiles.mu.Lock()

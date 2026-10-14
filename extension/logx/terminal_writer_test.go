@@ -42,7 +42,7 @@ func TestTerminalDefaultAndSkip(t *testing.T) {
 		_ = logger.Close()
 		derived.Info(t.Context(), "independent")
 	})
-	if !strings.Contains(output, "INFO terminal") || !strings.Contains(output, "INFO independent") {
+	if !strings.Contains(output, "[INFO] terminal") || !strings.Contains(output, "[INFO] independent") {
 		t.Fatal(output)
 	}
 	_, err = os.Stat(path)
@@ -122,7 +122,7 @@ func TestConcurrentTerminalInstances(t *testing.T) {
 		}
 		wg.Wait()
 	})
-	if strings.Count(output, "INFO complete record\n") != 100 {
+	if strings.Count(output, "[INFO] complete record\n") != 100 {
 		t.Fatal("lost or split terminal records")
 	}
 }
