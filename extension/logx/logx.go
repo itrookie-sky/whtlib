@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime/debug"
+	"strings"
 	"time"
 )
 
@@ -66,7 +67,15 @@ func (l *Logger) Close() (err error) {
 	return l.core.close()
 }
 
-func (l *Logger) output(ctx context.Context, level slog.Level, message string, args []any, formatted bool) {
+type outputMode uint8
+
+const (
+	outputPlain outputMode = iota
+	outputFormatted
+	outputStructured
+)
+
+func (l *Logger) output(ctx context.Context, level slog.Level, message string, args []any, mode outputMode) {
 	if isNil(ctx) {
 		panic("logx: nil context")
 	}
@@ -89,11 +98,21 @@ func (l *Logger) output(ctx context.Context, level slog.Level, message string, a
 	if l.skip <= int(^uint(0)>>1)-l.core.config.Skip {
 		pc = callerPC(l.skip + l.core.config.Skip)
 	}
-	if formatted {
+	switch mode {
+	case outputFormatted:
 		message = fmt.Sprintf(message, args...)
+	case outputPlain:
+		if len(args) > 0 {
+			values := make([]any, 0, len(args)+1)
+			if message != "" {
+				values = append(values, message)
+			}
+			values = append(values, args...)
+			message = strings.TrimSuffix(fmt.Sprintln(values...), "\n")
+		}
 	}
 	record := slog.NewRecord(time.Now(), level, message, pc)
-	if !formatted {
+	if mode == outputStructured {
 		record.Add(args...)
 	}
 	err = h.Handle(ctx, record)
@@ -103,47 +122,47 @@ func (l *Logger) output(ctx context.Context, level slog.Level, message string, a
 	}
 }
 
-// Log 按指定级别输出消息和结构化属性。
+// Log 按指定级别输出消息，可变参数以空格拼接到正文。
 func (l *Logger) Log(ctx context.Context, level slog.Level, message string, args ...any) {
-	l.output(ctx, level, message, args, false)
+	l.output(ctx, level, message, args, outputPlain)
 }
 
 // Debug 输出调试日志。
 func (l *Logger) Debug(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelDebug, message, args, false)
+	l.output(ctx, slog.LevelDebug, message, args, outputPlain)
 }
 
 // Info 输出普通日志。
 func (l *Logger) Info(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelInfo, message, args, false)
+	l.output(ctx, slog.LevelInfo, message, args, outputPlain)
 }
 
 // Warn 输出警告日志。
 func (l *Logger) Warn(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelWarn, message, args, false)
+	l.output(ctx, slog.LevelWarn, message, args, outputPlain)
 }
 
 // Error 输出错误日志。
 func (l *Logger) Error(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelError, message, args, false)
+	l.output(ctx, slog.LevelError, message, args, outputPlain)
 }
 
 // Debugf 输出格式化调试日志。
 func (l *Logger) Debugf(ctx context.Context, format string, args ...any) {
-	l.output(ctx, slog.LevelDebug, format, args, true)
+	l.output(ctx, slog.LevelDebug, format, args, outputFormatted)
 }
 
 // Infof 输出格式化普通日志。
 func (l *Logger) Infof(ctx context.Context, format string, args ...any) {
-	l.output(ctx, slog.LevelInfo, format, args, true)
+	l.output(ctx, slog.LevelInfo, format, args, outputFormatted)
 }
 
 // Warnf 输出格式化警告日志。
 func (l *Logger) Warnf(ctx context.Context, format string, args ...any) {
-	l.output(ctx, slog.LevelWarn, format, args, true)
+	l.output(ctx, slog.LevelWarn, format, args, outputFormatted)
 }
 
 // Errorf 输出格式化错误日志。
 func (l *Logger) Errorf(ctx context.Context, format string, args ...any) {
-	l.output(ctx, slog.LevelError, format, args, true)
+	l.output(ctx, slog.LevelError, format, args, outputFormatted)
 }

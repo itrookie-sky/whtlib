@@ -53,15 +53,15 @@ context key 支持可比较的自定义类型。TraceKey 未设置时使用默�
 
 | 方法 | 行为 |
 | --- | --- |
-| Debug、Info、Warn、Error | 接收 ctx、消息及可变结构化属性，无返回值。 |
-| Log | 接收 ctx、slog.Level、消息及结构化属性，无返回值。 |
+| Debug、Info、Warn、Error | 接收 ctx、消息及可变正文参数，无返回值。 |
+| Log | 接收 ctx、slog.Level、消息及可变正文参数，无返回值。 |
 | Debugf、Infof、Warnf、Errorf | 接收 ctx、格式串及参数，以 fmt.Sprintf 生成正文，无返回值。 |
 | SetConfig | 合并非零字段，更新当前实例并返回原指针，失败打印堆栈。 |
 | Default（包级） | 返回延迟初始化的全局 Logger，包级打印函数代理此实例。 |
 | Skip(n) | 返回额外跳过 n 层调用的派生 Logger。 |
 | Close | 关闭当前实例，释放文件引用，最后一个引用负责停止维护并关闭文件。 |
 
-普通方法遵循 slog 的消息加属性模型，可变参数不再以 fmt.Sprint 拼接正文；格式化文本使用带 f 方法。业务属性在行尾独立输出，不能覆盖日期后的 context JSON。
+普通方法将消息与可变参数以空格拼接为正文，空消息不产生前导空格；不按 slog 属性解析。格式化文本使用带 f 方法。LogAcc 单独按键值对累积业务属性，在行尾输出 JSON，不能覆盖日期后的 context JSON。
 
 所有输出方法要求非 nil ctx，nil 直接 panic；无请求上下文时显式传 context.Background()。ctx 取消不阻止日志输出。Writer.Write 和资源关闭接口不要求 ctx。
 

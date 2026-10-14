@@ -69,7 +69,7 @@ func TestContextAndAttributes(t *testing.T) {
 	ctx = context.WithValue(ctx, testKey(4), false)
 	ctx = context.WithValue(ctx, testKey(5), "")
 	ctx = context.WithValue(ctx, testKey(6), (*int)(nil))
-	logger.Info(ctx, "created\norder", "orderId", "o1")
+	NewLogAcc(WithLogger(logger)).Info(ctx, "created\norder", "orderId", "o1")
 	line := buffer.String()
 	if !strings.HasPrefix(line[31:], `{"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "INFO created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
 		t.Fatalf("unexpected record: %q", line)
@@ -246,7 +246,7 @@ func TestGroupEncodingErrorPreservesSiblings(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
 	diagnostic := captureStderr(t, func() {
-		logger.Info(t.Context(), "encoding", slog.Group("group", slog.Any("bad", make(chan int)), slog.Int("good", 1)))
+		NewLogAcc(WithLogger(logger)).Info(t.Context(), "encoding", "group", slog.GroupValue(slog.Any("bad", make(chan int)), slog.Int("good", 1)))
 	})
 	if !strings.Contains(diagnostic, "encode") {
 		t.Fatalf("encoding diagnostic missing: %s", diagnostic)

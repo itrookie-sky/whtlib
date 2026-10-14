@@ -121,7 +121,7 @@ func (a *LogAcc) output(ctx context.Context, level slog.Level, message string, a
 		totalSkip = logger.skip + skip + 1
 	}
 	view := Logger{core: logger.core, skip: totalSkip}
-	view.output(ctx, level, message, attrs, false)
+	view.output(ctx, level, message, attrs, outputStructured)
 }
 
 // Debug 合并可选键值对并打印当前字段快照。

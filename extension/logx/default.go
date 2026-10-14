@@ -30,45 +30,45 @@ func Skip(n int) (logger *Logger) {
 
 // Log 使用全局单例按指定级别打印。
 func Log(ctx context.Context, level slog.Level, message string, args ...any) {
-	Default().output(ctx, level, message, args, false)
+	Default().output(ctx, level, message, args, outputPlain)
 }
 
 // Debug 使用全局单例打印调试日志。
 func Debug(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelDebug, message, args, false)
+	Default().output(ctx, slog.LevelDebug, message, args, outputPlain)
 }
 
 // Info 使用全局单例打印普通日志。
 func Info(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelInfo, message, args, false)
+	Default().output(ctx, slog.LevelInfo, message, args, outputPlain)
 }
 
 // Warn 使用全局单例打印警告日志。
 func Warn(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelWarn, message, args, false)
+	Default().output(ctx, slog.LevelWarn, message, args, outputPlain)
 }
 
 // Error 使用全局单例打印错误日志。
 func Error(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelError, message, args, false)
+	Default().output(ctx, slog.LevelError, message, args, outputPlain)
 }
 
 // Debugf 使用全局单例打印格式化调试日志。
 func Debugf(ctx context.Context, format string, args ...any) {
-	Default().output(ctx, slog.LevelDebug, format, args, true)
+	Default().output(ctx, slog.LevelDebug, format, args, outputFormatted)
 }
 
 // Infof 使用全局单例打印格式化普通日志。
 func Infof(ctx context.Context, format string, args ...any) {
-	Default().output(ctx, slog.LevelInfo, format, args, true)
+	Default().output(ctx, slog.LevelInfo, format, args, outputFormatted)
 }
 
 // Warnf 使用全局单例打印格式化警告日志。
 func Warnf(ctx context.Context, format string, args ...any) {
-	Default().output(ctx, slog.LevelWarn, format, args, true)
+	Default().output(ctx, slog.LevelWarn, format, args, outputFormatted)
 }
 
 // Errorf 使用全局单例打印格式化错误日志。
 func Errorf(ctx context.Context, format string, args ...any) {
-	Default().output(ctx, slog.LevelError, format, args, true)
+	Default().output(ctx, slog.LevelError, format, args, outputFormatted)
 }
