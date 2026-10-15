@@ -107,6 +107,9 @@ func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 		line.WriteString(record.Time.Local().String())
 		line.WriteByte(' ')
 	}
+	lev := "[" + record.Level.String() + "]"
+	line.WriteString(lev)
+	line.WriteByte(' ')
 	line.Write(contextData)
 	if record.PC != 0 {
 		frames := runtime.CallersFrames([]uintptr{record.PC})
@@ -122,9 +125,6 @@ func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 			line.WriteString(strconv.Itoa(frame.Line))
 		}
 	}
-	line.WriteByte(' ')
-	lev := "[" + record.Level.String() + "]"
-	line.WriteString(lev)
 	line.WriteByte(' ')
 	line.WriteString(lineEscaper.Replace(record.Message))
 	var fields []jsonField

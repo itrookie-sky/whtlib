@@ -89,8 +89,9 @@ func TestLogAccDeferredLifecycle(t *testing.T) {
 				if strings.Count(line, "\n") != 1 {
 					t.Fatalf("expected one exit record: %q", line)
 				}
-				_, body, ok := strings.Cut(line, " [INFO] [")
-				if !ok {
+				_, body, ok := strings.Cut(line, " [INFO] ")
+				_, body, hasCost := strings.Cut(body, " [")
+				if !ok || !hasCost {
 					t.Fatal(line)
 				}
 				cost, data, ok := strings.Cut(body, "] HandleDevice ")
@@ -165,20 +166,20 @@ func TestLogAccCallersAndCost(t *testing.T) {
 	acc := NewLogAcc(WithLogger(logger))
 	_, file, line, _ := runtime.Caller(0)
 	acc.Info(t.Context(), "direct")
-	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" [INFO] direct") {
+	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" direct") {
 		t.Fatal(buffer.String())
 	}
 	buffer.Reset()
 	acc.Skip(1)
 	_, _, line, _ = runtime.Caller(0)
 	logAccWrapped(t.Context(), acc)
-	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" [INFO] wrapped") {
+	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" wrapped") {
 		t.Fatal(buffer.String())
 	}
 	buffer.Reset()
 	cost := NewLogAcc(WithLogger(logger), WithCost(time.Now().Add(-time.Second)))
 	cost.Info(t.Context(), "cost")
-	if !strings.Contains(buffer.String(), " [INFO] [") || !strings.Contains(buffer.String(), "] cost") {
+	if !strings.Contains(buffer.String(), " [INFO] {} ") || !strings.Contains(buffer.String(), "] cost") {
 		t.Fatal(buffer.String())
 	}
 	// 累积器打印不得创建 Logger.Skip 派生文件引用。
@@ -212,7 +213,7 @@ func TestLogAccConcurrentUpdatesAndPrint(t *testing.T) {
 		t.Fatalf("missing records: %d", len(lines))
 	}
 	for _, line := range lines {
-		_, data, ok := strings.Cut(line, " [INFO] concurrent ")
+		_, data, ok := strings.Cut(line, " concurrent ")
 		if !ok {
 			t.Fatal(line)
 		}
@@ -263,7 +264,7 @@ func TestLogAccDeferredDebugSkip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	expected := filepath.Base(file) + ":" + strconv.Itoa(line+1) + " [DEBUG] DoRequest"
+	expected := filepath.Base(file) + ":" + strconv.Itoa(line+1) + " DoRequest"
 	if !strings.Contains(buffer.String(), expected) || !strings.Contains(buffer.String(), `"resRaw":"`+response+`"`) {
 		t.Fatalf("deferred caller or final response incorrect: %s", buffer.String())
 	}

@@ -60,10 +60,10 @@ func main() {
 输出形如：
 
 ```text
-2026-10-13 14:30:00.000 +08:00 {"traceId":"abc123","userId":1001} app/main.go:42 INFO 创建订单成功 orderId o123
+2026-10-13 14:30:00 +0800 CST [INFO] {"traceId":"abc123","userId":1001} app/main.go:42 创建订单成功 orderId o123
 ```
 
-上下文 JSON 固定在日期后，traceId 第一，自定义字段按配置顺序排列。缺失字段省略，全缺失输出 `{}`。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记，其他日志内容仍尝试写入。所有打印方法及内部 output 均无返回值，编码和写入错误由 output 连同当前 goroutine 的调用堆栈直接写入 stderr，不经过配置的 Writer，避免递归；初始化与 Close 仍返回错误。
+上下文 JSON 固定在日期后的 [级别] 后，traceId 第一，自定义字段按配置顺序排列。缺失字段省略，全缺失输出 `{}`。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记，其他日志内容仍尝试写入。所有打印方法及内部 output 均无返回值，编码和写入错误由 output 连同当前 goroutine 的调用堆栈直接写入 stderr，不经过配置的 Writer，避免递归；初始化与 Close 仍返回错误。
 
 普通方法将 message 与 args 按空格拼接为正文（使用 fmt.Sprintln 的参数格式，移除其追加的换行）；空 message 不添加前导空格，没有 args 时保留原正文。例如 Info(ctx, "订单", 123, "完成") 输出正文“订单 123 完成”。这些参数不按 slog 属性解析，不产生 !BADKEY。文本格式化使用 Infof 等方法；只有 LogAcc 的打印参数按键值对处理并输出行尾 JSON。ctx 取消仍可记录日志，nil ctx 会 panic。默认 Info 级别，Config.Level 在 New/SetConfig 时读取级别快照，之后通过 SetConfig 调整，外部 LevelVar 的变化不会传播到实例。
 
@@ -164,7 +164,7 @@ defer wrapped.Close()
 
 ## LogAcc 累积日志字段
 
-`LogAcc` 参考 LogContext 的用法，内部使用锁保护的私有 map，不依赖 GoFrame。字段按键排序输出为日志末尾的结构化 JSON，ctx 特殊字段仍在时间后输出。
+`LogAcc` 参考 LogContext 的用法，内部使用锁保护的私有 map，不依赖 GoFrame。字段按键排序输出为日志末尾的结构化 JSON，ctx 特殊字段在时间和级别后输出。
 
 ```go
 acc := logx.NewLogAcc() // 默认使用全局 Logger

@@ -1,6 +1,6 @@
 # logx 模块设计
 
-`logx` 位于 `extension/logx`，基于标准库 `log/slog`，强制传入 `context.Context`。上下文特殊字段组成有序 JSON，紧跟日期时间输出；支持源码位置回溯、私有全局文件管理，以及内置文件 Writer 的分割、轮转和清理。全部使用标准库，不引入 GoFrame 依赖。
+`logx` 位于 `extension/logx`，基于标准库 `log/slog`，强制传入 `context.Context`。上下文特殊字段组成有序 JSON，紧跟日期时间后的级别输出；支持源码位置回溯、私有全局文件管理，以及内置文件 Writer 的分割、轮转和清理。全部使用标准库，不引入 GoFrame 依赖。
 
 已确定：使用 slog、ctx 必传、traceId 首位、有序自定义字段、Skip(n)、封闭 Writer、同路径共享文件资源、分割阈值和保留时长可配置、默认保留 24h。本设计已在 extension/logx 实现；具体调用示例见该包 README。
 
@@ -18,14 +18,14 @@ Logger 负责入口、级别判断和调用位置；Handler 负责格式与同�
 ## 输出格式
 
 ```text
-日期时间 {上下文 JSON} 文件:行号 级别 正文 [业务属性 JSON]
+日期时间 [级别] {上下文 JSON} 文件:行号 正文 [业务属性 JSON]
 ```
 
 末尾业务属性 JSON 仅在传入结构化属性时输出，方括号表示可选部分，不是实际字符。
 
 ```text
-2026-10-13 14:30:00.000 +08:00 {"traceId":"abc123","userId":1001} order/service.go:42 INFO 创建订单成功
-2026-10-13 14:30:01.123 +08:00 {"userId":1001} order/service.go:42 INFO 创建订单成功 {"orderId":"o123"}
+2026-10-13 14:30:00 +0800 CST [INFO] {"traceId":"abc123","userId":1001} order/service.go:42 创建订单成功
+2026-10-13 14:30:01.123 +0800 CST [INFO] {"userId":1001} order/service.go:42 创建订单成功 {"orderId":"o123"}
 2026-10-13 14:30:02.456 +08:00 {} order/service.go:42 ERROR 创建订单失败
 ```
 
@@ -61,7 +61,7 @@ context key 支持可比较的自定义类型。TraceKey 未设置时使用默�
 | Skip(n) | 返回额外跳过 n 层调用的派生 Logger。 |
 | Close | 关闭当前实例，释放文件引用，最后一个引用负责停止维护并关闭文件。 |
 
-普通方法将消息与可变参数以空格拼接为正文，空消息不产生前导空格；不按 slog 属性解析。格式化文本使用带 f 方法。LogAcc 单独按键值对累积业务属性，在行尾输出 JSON，不能覆盖日期后的 context JSON。
+普通方法将消息与可变参数以空格拼接为正文，空消息不产生前导空格；不按 slog 属性解析。格式化文本使用带 f 方法。LogAcc 单独按键值对累积业务属性，在行尾输出 JSON，不能覆盖级别后的 context JSON。
 
 所有输出方法要求非 nil ctx，nil 直接 panic；无请求上下文时显式传 context.Background()。ctx 取消不阻止日志输出。Writer.Write 和资源关闭接口不要求 ctx。
 
@@ -174,7 +174,7 @@ extension/logx/
 
 | 场景 | 预期 |
 | --- | --- |
-| traceId 与自定义字段齐全或部分缺失 | 日期后 JSON 有效，traceId 第一，其余按配置顺序；全缺失输出 {}。 |
+| traceId 与自定义字段齐全或部分缺失 | 级别后 JSON 有效，traceId 第一，其余按配置顺序；全缺失输出 {}。 |
 | nil、typed nil、空字符串、0、false | 前三者省略，后两者保留 JSON 类型。 |
 | 编码失败 | 输出标记并保留其他日志内容，打印方法不返回错误。 |
 | ctx 取消或为 nil | 取消仍输出，nil panic。 |

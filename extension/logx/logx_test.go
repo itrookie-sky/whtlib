@@ -71,7 +71,7 @@ func TestContextAndAttributes(t *testing.T) {
 	ctx = context.WithValue(ctx, testKey(6), (*int)(nil))
 	NewLogAcc(WithLogger(logger)).Info(ctx, "created\norder", "orderId", "o1")
 	line := buffer.String()
-	if !strings.Contains(line, ` {"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "[INFO] created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
+	if !strings.Contains(line, ` [INFO] {"traceId":"a\"\nb","userId":123,"zero":0,"false":false} `) || !strings.HasSuffix(line, "created\\norder {\"orderId\":\"o1\"}\n") || strings.Count(line, "\n") != 1 {
 		t.Fatalf("unexpected record: %q", line)
 	}
 }
@@ -81,26 +81,26 @@ func TestCallerAndSkip(t *testing.T) {
 	logger := newBufferedLogger(t, &buffer, Config{})
 	_, file, line, _ := runtime.Caller(0)
 	logger.Info(t.Context(), "direct")
-	expected := fmt.Sprintf("%s:%d [INFO] direct", filepath.Base(file), line+1)
+	expected := fmt.Sprintf("%s:%d direct", filepath.Base(file), line+1)
 	if !strings.Contains(buffer.String(), expected) {
 		t.Fatalf("want %q, got %q", expected, buffer.String())
 	}
 	buffer.Reset()
 	_, _, line, _ = runtime.Caller(0)
 	wrappedLog(t, logger)
-	expected = fmt.Sprintf("%s:%d [INFO] wrapped", filepath.Base(file), line+1)
+	expected = fmt.Sprintf("%s:%d wrapped", filepath.Base(file), line+1)
 	if !strings.Contains(buffer.String(), expected) {
 		t.Fatalf("want %q, got %q", expected, buffer.String())
 	}
 	buffer.Reset()
 	_, _, line, _ = runtime.Caller(0)
 	logger.Infof(t.Context(), "number %d", 3)
-	if !strings.Contains(buffer.String(), fmt.Sprintf("%s:%d [INFO] number 3", filepath.Base(file), line+1)) {
+	if !strings.Contains(buffer.String(), fmt.Sprintf("%s:%d number 3", filepath.Base(file), line+1)) {
 		t.Fatalf("formatted caller: %s", buffer.String())
 	}
 	buffer.Reset()
 	testSkip(t, logger, int(^uint(0)>>1)).Info(t.Context(), "no caller")
-	if !strings.HasSuffix(buffer.String(), "{} [INFO] no caller\n") || logger.skip != 0 {
+	if !strings.HasSuffix(buffer.String(), "[INFO] {} no caller\n") || logger.skip != 0 {
 		t.Fatalf("skip overflow boundary: %q", buffer.String())
 	}
 }
@@ -127,7 +127,7 @@ func TestFilteringCancellationAndClose(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	logger.Debug(ctx, "cancelled")
-	if !strings.Contains(buffer.String(), "[DEBUG] cancelled") {
+	if !strings.Contains(buffer.String(), "cancelled") {
 		t.Fatal("cancelled context discarded")
 	}
 	derived := logger.Skip(1)
@@ -190,7 +190,7 @@ func TestGroups(t *testing.T) {
 	record := slog.NewRecord(time.Time{}, slog.LevelInfo, "groups", 0)
 	record.AddAttrs(slog.Int("c", 3), slog.Group(""), slog.Attr{})
 	err := h.Handle(t.Context(), record)
-	if err != nil || buffer.String() != "{} [INFO] groups {\"request\":{\"a\":1,\"child\":{\"b\":2,\"c\":3}}}\n" {
+	if err != nil || buffer.String() != "[INFO] {} groups {\"request\":{\"a\":1,\"child\":{\"b\":2,\"c\":3}}}\n" {
 		t.Fatalf("group output: %q, %v", buffer.String(), err)
 	}
 }
@@ -288,7 +288,7 @@ func TestSuccessfulAndFilteredOutputHasNoDiagnostic(t *testing.T) {
 		logger.Info(t.Context(), "success")
 		logger.Debugf(t.Context(), "%s", explosiveStringer{})
 	})
-	if diagnostic != "" || !strings.Contains(buffer.String(), "[INFO] success") {
+	if diagnostic != "" || !strings.Contains(buffer.String(), "success") {
 		t.Fatalf("unexpected diagnostic %q or output %q", diagnostic, buffer.String())
 	}
 }
@@ -314,7 +314,7 @@ func TestTimestampLocalString(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := tc.timestamp + " +0800 CST {} [INFO] timestamp\n"
+			expected := tc.timestamp + " +0800 CST [INFO] {} timestamp\n"
 			if buffer.String() != expected {
 				t.Fatalf("want %q, got %q", expected, buffer.String())
 			}
