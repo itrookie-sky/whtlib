@@ -58,10 +58,31 @@ func appendContextField(ctx context.Context, fields []jsonField, name string, ke
 }
 
 func contextJSON(ctx context.Context, config Config) (data []byte, err error) {
-	fields := make([]jsonField, 0, 1+len(config.ContextFields))
-	fields = appendContextField(ctx, fields, "traceId", config.TraceKey)
+	fields := make([]jsonField, 0, len(config.ContextFields))
 	for _, field := range config.ContextFields {
 		fields = appendContextField(ctx, fields, field.Name, field.Key)
 	}
+	if len(fields) == 0 {
+		return nil, nil
+	}
 	return encodeFields(fields)
+}
+
+// contextTrace 将 traceId 输出为独立占位，字符串去掉外围引号并保留转义。
+func contextTrace(ctx context.Context, config Config) (data []byte, err error) {
+	fields := appendContextField(ctx, nil, "traceId", config.TraceKey)
+	if len(fields) == 0 {
+		return []byte("{}"), nil
+	}
+	value, err := json.Marshal(fields[0].value)
+	if err != nil {
+		return []byte("{[json encode error]}"), fmt.Errorf("logx: encode traceId: %w", err)
+	}
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = value[1 : len(value)-1]
+	}
+	data = append(data, '{')
+	data = append(data, value...)
+	data = append(data, '}')
+	return
 }

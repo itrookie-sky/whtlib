@@ -102,6 +102,8 @@ var lineEscaper = strings.NewReplacer("\r", `\r`, "\n", `\n`)
 
 func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 	contextData, err := contextJSON(ctx, h.config)
+	traceData, traceErr := contextTrace(ctx, h.config)
+	err = errors.Join(err, traceErr)
 	var line strings.Builder
 	if !record.Time.IsZero() {
 		line.WriteString(record.Time.Local().String())
@@ -110,7 +112,11 @@ func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 	lev := "[" + record.Level.String() + "]"
 	line.WriteString(lev)
 	line.WriteByte(' ')
-	line.Write(contextData)
+	line.Write(traceData)
+	if len(contextData) > 0 {
+		line.WriteByte(' ')
+		line.Write(contextData)
+	}
 	if record.PC != 0 {
 		frames := runtime.CallersFrames([]uintptr{record.PC})
 		frame, _ := frames.Next()

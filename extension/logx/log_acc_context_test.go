@@ -39,7 +39,7 @@ func TestLogAccTraceContext(t *testing.T) {
 				acc.SetValue("result", "done")
 			}()
 			line := buffer.String()
-			if !strings.Contains(line, `{"traceId":"trace-123"}`) || !strings.Contains(line, `"result":"done"`) {
+			if !strings.Contains(line, `{trace-123}`) || !strings.Contains(line, `"result":"done"`) {
 				t.Fatalf("ctx or accumulated fields missing: %s", line)
 			}
 		})
