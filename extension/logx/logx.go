@@ -13,7 +13,7 @@ import (
 )
 
 // 编译时检查通用日志接口兼容性。
-var _ adapter.Logger = (*Logger)(nil)
+var _ adapter.Logger[*Logger] = (*Logger)(nil)
 
 type CtxKey string
 

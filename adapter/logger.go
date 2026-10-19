@@ -9,12 +9,15 @@ import (
 
 // Logger 定义与 logx 一致的日志打印接口。
 //
-// 所有方法必须传入非 nil 的 ctx，且不返回错误。
+// 打印方法必须传入非 nil 的 ctx，且不返回错误。
 // 普通方法将 message 与 args 按空格拼接为正文，不将 args 解析为键值对；
 // 空 message 不产生前导空格，没有 args 时保留 message。
 // 带 f 的方法遵循 fmt.Sprintf 格式化语义。
-// 实现应支持并发打印；配置、调用层级调整与关闭由实例创建方管理。
-type Logger interface {
+// L 表示 Skip 返回的实例类型，保留具体实现的返回类型。
+// 实现应支持并发打印；配置与关闭由实例创建方管理。
+type Logger[L any] interface {
+	// Skip 返回额外跳过 n 层业务调用的实例，资源生命周期遵循具体实现约定。
+	Skip(n int) (logger L)
 	// Log 按指定级别输出日志。
 	Log(ctx context.Context, level slog.Level, message string, args ...any)
 	// Debug 输出调试日志。

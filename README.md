@@ -33,12 +33,15 @@ whtlib/
 
 ## 通用日志接口
 
-其他组件可依赖 `adapter.Logger`，由调用方注入 `*logx.Logger` 或 `logx.Default()`：
+其他组件可依赖 `adapter.Logger[L]`，由调用方注入 `*logx.Logger` 或 `logx.Default()`：
 
 ```go
-var logger adapter.Logger = logx.Default()
+var logger adapter.Logger[*logx.Logger] = logx.Default()
 logger.Info(ctx, "订单", 123, "完成")
 logger.Infof(ctx, "订单 %d 完成", 123)
 ```
 
-接口包含 Log、Debug、Info、Warn、Error 以及四个带 f 的格式化方法。普通参数按空格拼接正文，不按 slog 键值对解析。adapter 只依赖标准库，不导入 logx；logx 包包含编译期接口检查。SetConfig、Skip 和 Close 由创建实例的调用方管理，不属于通用打印接口。
+接口使用泛型 L 指定 Skip 的返回类型，包含 Skip、Log、Debug、Info、Warn、Error 以及四个带 f 的格式化方法。普通参数按空格拼接正文，不按 slog 键值对解析。adapter 只依赖标准库，不导入 logx；logx 包包含编译期接口检查。SetConfig 和 Close 由创建实例的调用方管理，不属于通用打印接口。logx 的 Skip 返回独立实例，调用方仍需单独 Close；泛型接口不改变其生命周期。
+
+
+需要在通用组件中继续调用 Skip 返回值的日志方法时，可以使用约束 `L adapter.Logger[L]`；这样组件不需要依赖具体的 logx 类型。
