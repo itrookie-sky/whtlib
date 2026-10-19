@@ -22,15 +22,22 @@ type AesUtils struct {
 	encodingType string // 编码类型，默认:base64,可选:base16
 }
 
-// NewAesUtilsWithKey 使用自定义密钥创建AES工具实例
-func NewAesUtils(key string, ops ...AesOptionFunc) *AesUtils {
-	aes := &AesUtils{
+// NewAesUtils 使用自定义密钥创建 AES 工具实例。
+// 密钥必须为 16、24 或 32 字节，分别对应 AES-128、AES-192 和 AES-256。
+// 无效长度返回 nil 和标准库 aes.KeySizeError。
+func NewAesUtils(key string, ops ...AesOptionFunc) (utils *AesUtils, err error) {
+	switch len(key) {
+	case 16, 24, 32:
+	default:
+		return nil, aes.KeySizeError(len(key))
+	}
+	utils = &AesUtils{
 		key: []byte(key),
 	}
 	for _, op := range ops {
-		op(aes)
+		op(utils)
 	}
-	return aes
+	return
 }
 
 type AesOptionFunc func(aes *AesUtils)
