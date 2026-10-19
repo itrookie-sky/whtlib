@@ -4,7 +4,6 @@ package adapter
 
 import (
 	"context"
-	"log/slog"
 )
 
 // Logger 定义与 logx 一致的日志打印接口。
@@ -15,10 +14,8 @@ import (
 // 带 f 的方法遵循 fmt.Sprintf 格式化语义。
 // 实现应支持并发打印；配置与关闭由实例创建方管理。
 type Logger interface {
-	// Skip 返回额外跳过 n 层业务调用的实例，资源生命周期遵循具体实现约定。
+	// Skip 文件回溯
 	Skip(n int) Logger
-	// Log 按指定级别输出日志。
-	Log(ctx context.Context, level slog.Level, message string, args ...any)
 	// Debug 输出调试日志。
 	Debug(ctx context.Context, message string, args ...any)
 	// Info 输出普通日志。
