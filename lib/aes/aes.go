@@ -10,8 +10,6 @@ import (
 )
 
 const (
-	// 默认 AES密钥种子
-	defaultAESKey      = "TheBestSecretKey"
 	EncodingTypebase16 = "base16"
 	EncodingTypebase64 = "base64"
 )
