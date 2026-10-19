@@ -10,7 +10,9 @@ import (
 	"testing"
 )
 
+// TestNewAesUtilsKeyLength 验证合法密钥长度、边界长度及中文密钥的字节长度校验。
 func TestNewAesUtilsKeyLength(t *testing.T) {
+	// 覆盖空密钥、三种合法长度及其相邻的非法长度。
 	for _, size := range []int{0, 15, 16, 17, 23, 24, 25, 31, 32, 33} {
 		t.Run(fmt.Sprintf("bytes_%d", size), func(t *testing.T) {
 			utils, err := NewAesUtils(strings.Repeat("k", size))
@@ -20,6 +22,7 @@ func TestNewAesUtilsKeyLength(t *testing.T) {
 					t.Fatalf("valid key rejected: %v", err)
 				}
 			} else {
+				// 非法密钥应返回空实例，并保留标准库错误类型和实际字节数。
 				keyErr, ok := errors.AsType[aes.KeySizeError](err)
 				if utils != nil || !ok || int(keyErr) != size {
 					t.Fatalf("want nil and KeySizeError(%d), got %v, %v", size, utils, err)
@@ -38,6 +41,7 @@ func TestNewAesUtilsKeyLength(t *testing.T) {
 	}
 }
 
+// TestAesRoundTrip 验证三种密钥长度与各编码方式的加解密往返结果。
 func TestAesRoundTrip(t *testing.T) {
 	for _, size := range []int{16, 24, 32} {
 		for _, encoding := range []string{"default", EncodingTypebase16, EncodingTypebase64, "rawurl"} {
@@ -54,16 +58,19 @@ func TestAesRoundTrip(t *testing.T) {
 				if encoding == "rawurl" {
 					encrypt, decrypt = utils.EncryptDataRawURL, utils.DecryptDataRawURL
 				}
+				// 覆盖空文本、短文本、恰好一个分组及包含中文的多分组文本。
 				for _, plain := range []string{"", "hello AES", strings.Repeat("a", 16), "中文日志与多分组内容：" + strings.Repeat("abc", 20)} {
 					encrypted, err := encrypt(plain)
 					if err != nil {
 						t.Fatal(err)
 					}
+					// 独立解码密文，确认输出编码符合所选模式。
 					var ciphertext []byte
 					switch encoding {
 					case EncodingTypebase16:
 						ciphertext, err = hex.DecodeString(encrypted)
 					case "rawurl":
+						// URL 安全的无填充编码不能包含标准 Base64 的特殊字符和填充符。
 						if strings.ContainsAny(encrypted, "+/=") {
 							t.Fatalf("not raw URL encoding: %q", encrypted)
 						}
@@ -71,10 +78,12 @@ func TestAesRoundTrip(t *testing.T) {
 					default:
 						ciphertext, err = base64.StdEncoding.DecodeString(encrypted)
 					}
+					// 即使原文长度恰好为分组整数倍，也应追加一个完整填充分组。
 					wantLength := (len(plain)/aes.BlockSize + 1) * aes.BlockSize
 					if err != nil || len(ciphertext) != wantLength {
 						t.Fatalf("invalid encoding or padding length: bytes=%d want=%d err=%v", len(ciphertext), wantLength, err)
 					}
+					// 解密结果必须逐字节还原原文，并通过测试日志展示结果。
 					decoded, err := decrypt(encrypted)
 					if err != nil || decoded != plain {
 						t.Fatalf("round trip: got %q want %q err=%v", decoded, plain, err)
@@ -86,6 +95,7 @@ func TestAesRoundTrip(t *testing.T) {
 	}
 }
 
+// TestAesDecryptInvalidInput 验证各解码入口拒绝空密文、非法编码和非分组长度密文。
 func TestAesDecryptInvalidInput(t *testing.T) {
 	utils, err := NewAesUtils(strings.Repeat("k", 16))
 	if err != nil {
@@ -95,6 +105,7 @@ func TestAesDecryptInvalidInput(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// short 使用合法编码包装五字节数据，以区分编码错误和密文长度错误。
 	for _, tc := range []struct {
 		name    string
 		decrypt func(string) (string, error)
@@ -110,6 +121,7 @@ func TestAesDecryptInvalidInput(t *testing.T) {
 				if err == nil || decoded != "" {
 					t.Fatalf("invalid input accepted: %q => %q, %v", input, decoded, err)
 				}
+				// 非法字符触发解码错误，空密文和短密文触发分组长度错误。
 				want := "invalid ciphertext length"
 				if input == "%%%" {
 					want = "invalid encrypted data"
