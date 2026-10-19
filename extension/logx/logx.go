@@ -8,7 +8,12 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/itrookie-sky/whtlib/adapter"
 )
+
+// 编译时检查通用日志接口兼容性。
+var _ adapter.Logger = (*Logger)(nil)
 
 type CtxKey string
 
