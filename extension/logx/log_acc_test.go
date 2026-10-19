@@ -179,7 +179,7 @@ func TestLogAccCallersAndCost(t *testing.T) {
 	buffer.Reset()
 	cost := NewLogAcc(WithLogger(logger), WithCost(time.Now().Add(-time.Second)))
 	cost.Info(t.Context(), "cost")
-	if !strings.Contains(buffer.String(), " [INFO] {} ") || !strings.Contains(buffer.String(), "] cost") {
+	if !strings.Contains(buffer.String(), " [INFO] ") || !strings.Contains(buffer.String(), "] cost") {
 		t.Fatal(buffer.String())
 	}
 	// 累积器打印不得创建 Logger.Skip 派生文件引用。

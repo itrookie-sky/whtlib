@@ -100,7 +100,7 @@ func TestCallerAndSkip(t *testing.T) {
 	}
 	buffer.Reset()
 	testSkip(t, logger, int(^uint(0)>>1)).Info(t.Context(), "no caller")
-	if !strings.HasSuffix(buffer.String(), "[INFO] {} no caller\n") || logger.skip != 0 {
+	if !strings.HasSuffix(buffer.String(), "[INFO] no caller\n") || logger.skip != 0 {
 		t.Fatalf("skip overflow boundary: %q", buffer.String())
 	}
 }
@@ -190,7 +190,7 @@ func TestGroups(t *testing.T) {
 	record := slog.NewRecord(time.Time{}, slog.LevelInfo, "groups", 0)
 	record.AddAttrs(slog.Int("c", 3), slog.Group(""), slog.Attr{})
 	err := h.Handle(t.Context(), record)
-	if err != nil || buffer.String() != "[INFO] {} groups {\"request\":{\"a\":1,\"child\":{\"b\":2,\"c\":3}}}\n" {
+	if err != nil || buffer.String() != "[INFO] groups {\"request\":{\"a\":1,\"child\":{\"b\":2,\"c\":3}}}\n" {
 		t.Fatalf("group output: %q, %v", buffer.String(), err)
 	}
 }
@@ -314,7 +314,7 @@ func TestTimestampLocalString(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			expected := tc.timestamp + " +0800 CST [INFO] {} timestamp\n"
+			expected := tc.timestamp + " +0800 CST [INFO] timestamp\n"
 			if buffer.String() != expected {
 				t.Fatalf("want %q, got %q", expected, buffer.String())
 			}

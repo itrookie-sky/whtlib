@@ -16,12 +16,14 @@ func TestContextTracePlaceholder(t *testing.T) {
 		user  any
 		want  string
 	}{
-		{name: "empty", want: "[INFO] {} message\n"},
+		{name: "empty string", trace: "", want: "[INFO] message\n"},
+		{name: "named empty string", trace: traceValue(""), user: 1001, want: "[INFO] {\"userId\":1001} message\n"},
+		{name: "empty", want: "[INFO] message\n"},
 		{name: "trace only", trace: "abc123", want: "[INFO] {abc123} message\n"},
-		{name: "user only", user: 1001, want: "[INFO] {} {\"userId\":1001} message\n"},
+		{name: "user only", user: 1001, want: "[INFO] {\"userId\":1001} message\n"},
 		{name: "both", trace: traceValue("abc123"), user: 1001, want: "[INFO] {abc123} {\"userId\":1001} message\n"},
 		{name: "empty user", trace: "abc123", user: "", want: "[INFO] {abc123} message\n"},
-		{name: "typed nil", trace: (*string)(nil), user: (*int)(nil), want: "[INFO] {} message\n"},
+		{name: "typed nil", trace: (*string)(nil), user: (*int)(nil), want: "[INFO] message\n"},
 		{name: "zero values", trace: 0, user: false, want: "[INFO] {0} {\"userId\":false} message\n"},
 		{name: "escaped trace", trace: "a\nb", want: "[INFO] {a\\nb} message\n"},
 	} {

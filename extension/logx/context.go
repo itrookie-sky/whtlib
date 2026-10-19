@@ -68,11 +68,11 @@ func contextJSON(ctx context.Context, config Config) (data []byte, err error) {
 	return encodeFields(fields)
 }
 
-// contextTrace 将 traceId 输出为独立占位，字符串去掉外围引号并保留转义。
+// contextTrace 将 traceId 输出为独立占位，空值省略，字符串去掉外围引号并保留转义。
 func contextTrace(ctx context.Context, config Config) (data []byte, err error) {
 	fields := appendContextField(ctx, nil, "traceId", config.TraceKey)
 	if len(fields) == 0 {
-		return []byte("{}"), nil
+		return nil, nil
 	}
 	value, err := json.Marshal(fields[0].value)
 	if err != nil {

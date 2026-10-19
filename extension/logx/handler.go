@@ -111,8 +111,10 @@ func (h *handler) Handle(ctx context.Context, record slog.Record) (err error) {
 	}
 	lev := "[" + record.Level.String() + "]"
 	line.WriteString(lev)
-	line.WriteByte(' ')
-	line.Write(traceData)
+	if len(traceData) > 0 {
+		line.WriteByte(' ')
+		line.Write(traceData)
+	}
 	if len(contextData) > 0 {
 		line.WriteByte(' ')
 		line.Write(contextData)

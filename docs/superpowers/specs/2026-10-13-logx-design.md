@@ -25,11 +25,11 @@ Logger 负责入口、级别判断和调用位置；Handler 负责格式与同�
 
 ```text
 2026-10-13 14:30:00 +0800 CST [INFO] {abc123} {"userId":1001} order/service.go:42 创建订单成功
-2026-10-13 14:30:01.123 +0800 CST [INFO] {} {"userId":1001} order/service.go:42 创建订单成功 {"orderId":"o123"}
-2026-10-13 14:30:02.456 +08:00 {} order/service.go:42 ERROR 创建订单失败
+2026-10-13 14:30:01.123 +0800 CST [INFO] {"userId":1001} order/service.go:42 创建订单成功 {"orderId":"o123"}
+2026-10-13 14:30:02.456 +0800 CST [ERROR] order/service.go:42 创建订单失败
 ```
 
-日期默认使用本地时区，格式为 `YYYY-MM-DD HH:mm:ss.SSS ±HH:mm`（固定三位毫秒，末尾为 UTC 时区偏移）。上下文 JSON 固定处于日期之后首位，traceId 存在时必须是对象第一个成员，其余字段按配置顺序输出。无有效字段时输出 `{}`。
+日期使用本地时区的 Time.String() 格式，小数位按实际精度输出。级别紧随日期；traceId 有值时以 {值} 独立输出，缺失、nil 或空字符串时省略。其他上下文字段按配置顺序输出 JSON，无有效字段时省略。可选区块省略时不保留分隔空格。
 
 键和值使用 encoding/json 编码并保留 JSON 类型，正文换行与回车转义，每条记录以一个真实换行结束。整条日志为文本与 JSON 块的混合格式，不是完整 JSON 文档。
 
@@ -174,7 +174,7 @@ extension/logx/
 
 | 场景 | 预期 |
 | --- | --- |
-| traceId 与自定义字段齐全或部分缺失 | 级别后 traceId 独立占位，缺失输出 {}；其余按配置顺序输出 JSON，全缺失时省略。 |
+| traceId 与自定义字段齐全或部分缺失 | 级别后 traceId 独立占位，缺失时省略；其余按配置顺序输出 JSON，全缺失时省略。 |
 | nil、typed nil、空字符串、0、false | 前三者省略，后两者保留 JSON 类型。 |
 | 编码失败 | 输出标记并保留其他日志内容，打印方法不返回错误。 |
 | ctx 取消或为 nil | 取消仍输出，nil panic。 |
