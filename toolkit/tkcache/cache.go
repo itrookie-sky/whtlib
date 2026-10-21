@@ -1,4 +1,4 @@
-// Package tkcache 提供统一的内存与 Redis 字节缓存。
+// Package tkcache 提供统一的内存、Redis 与文件字节缓存。
 package tkcache
 
 import (
@@ -15,12 +15,13 @@ import (
 	"github.com/itrookie-sky/whtlib/toolkit/tkredis"
 )
 
-// Backend 指定实例的存储后端。
-type Backend string
+// StoreType 指定实例使用的 Store 类型。
+type StoreType string
 
 const (
-	BackendMemory Backend = "memory"
-	BackendRedis  Backend = "redis"
+	MemoryStore StoreType = "memory"
+	RedisStore  StoreType = "redis"
+	FileStore   StoreType = "file"
 )
 
 var (
@@ -32,11 +33,13 @@ var (
 )
 
 // Config 配置独立缓存，RedisClient 始终由调用方管理。
+// FilePath 仅用于 FileStore，一个文件只能由一个活动 Cache 实例持有。
 type Config struct {
-	Backend         Backend
+	Store           StoreType
 	Namespace       string
 	CleanupInterval time.Duration
 	RedisClient     *tkredis.Client
+	FilePath        string
 }
 
 // Loader 在未命中时提供字节数据。
@@ -92,7 +95,7 @@ type store interface {
 
 // Cache 管理一个 Namespace；不同内存实例的数据彼此隔离。
 type Cache struct {
-	backend store
+	store   store
 	prefix  string
 	gate    sync.RWMutex
 	stripes [64]sync.Mutex
@@ -108,18 +111,23 @@ func New(config Config) (cache *Cache, err error) {
 		return nil, ErrInvalidConfig
 	}
 	cache = &Cache{prefix: "tkcache:" + config.Namespace + ":", flights: make(map[string]*flight), active: make(map[*flight]struct{})}
-	switch config.Backend {
-	case "", BackendMemory:
+	switch config.Store {
+	case "", MemoryStore:
 		interval := config.CleanupInterval
 		if interval == 0 {
 			interval = time.Minute
 		}
-		cache.backend = newMemoryStore(interval)
-	case BackendRedis:
+		cache.store = newMemoryStore(interval)
+	case RedisStore:
 		if config.RedisClient == nil || config.RedisClient.Raw() == nil {
 			return nil, ErrInvalidConfig
 		}
-		cache.backend = &redisStore{client: config.RedisClient.Raw()}
+		cache.store = &redisStore{client: config.RedisClient.Raw()}
+	case FileStore:
+		cache.store, err = newFileStore(config.FilePath)
+		if err != nil {
+			return nil, err
+		}
 	default:
 		return nil, ErrInvalidConfig
 	}
@@ -181,7 +189,7 @@ func (c *Cache) Get(ctx context.Context, key string) (value []byte, found bool, 
 	if err != nil {
 		return
 	}
-	return c.backend.get(ctx, physical)
+	return c.store.get(ctx, physical)
 }
 
 func (c *Cache) mutate(ctx context.Context, key string, req request) (result outcome, err error) {
@@ -206,7 +214,7 @@ func (c *Cache) mutatePhysical(ctx context.Context, key, physical string, req re
 	if err != nil {
 		return
 	}
-	result, err = c.backend.apply(ctx, physical, req)
+	result, err = c.store.apply(ctx, physical, req)
 	if (result.changed || req.operation == opGetDelete) && key != "" {
 		c.mu.Lock()
 		delete(c.flights, key)
@@ -278,7 +286,7 @@ func (c *Cache) TTL(ctx context.Context, key string) (ttl time.Duration, found b
 	if err != nil {
 		return
 	}
-	return c.backend.ttl(ctx, physical)
+	return c.store.ttl(ctx, physical)
 }
 
 // Exists 判断当前是否有未过期的数据。
@@ -359,7 +367,7 @@ func (c *Cache) Clear(ctx context.Context) (err error) {
 	c.mu.Lock()
 	clear(c.flights)
 	c.mu.Unlock()
-	return c.backend.clear(ctx, c.prefix)
+	return c.store.clear(ctx, c.prefix)
 }
 
 // Close 终止维护与等待者，释放内存，不关闭外部 Redis 客户端。
@@ -388,7 +396,7 @@ func (c *Cache) Close() (err error) {
 	for _, cancel := range cancels {
 		cancel()
 	}
-	return c.backend.close()
+	return c.store.close()
 }
 
 // String 返回不包含数据与连接认证信息的实例标识。

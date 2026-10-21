@@ -1,10 +1,10 @@
 # tkcache
 
-统一的字节缓存，支持独立内存实例和 Redis。文本直接存取，MySQL 等查询结果通过调用方提供的 loader 与泛型 JSON 函数缓存，不依赖数据库驱动或 ORM。
+统一的字节缓存，支持内存、Redis 和文件三种 Store。文本直接存取，MySQL 等查询结果通过调用方提供的 loader 与泛型 JSON 函数缓存，不依赖数据库驱动或 ORM。
 
 ```go
 cache, err := tkcache.New(tkcache.Config{
-    Backend: tkcache.BackendMemory,
+    Store: tkcache.MemoryStore,
     Namespace: "orders",
 })
 if err != nil {
@@ -22,7 +22,29 @@ text, found, err := cache.GetString(ctx, "notice")
 user, err := tkcache.GetOrLoadJSON[*User](ctx, cache, "user:123", 5*time.Minute, loadUser)
 ```
 
-Redis 模式先用 `tkredis.New(*redis.Options)` 或 `tkredis.Wrap(redis.UniversalClient)` 获得客户端，再传入 `Config{Backend: tkcache.BackendRedis, Namespace: "orders", RedisClient: client}`。缓存始终借用连接池；关闭缓存不关闭客户端、不删除 Redis 数据。连接超时、认证和 Cluster/Sentinel 参数由原生客户端配置。
+Redis 模式先用 `tkredis.New(*redis.Options)` 或 `tkredis.Wrap(redis.UniversalClient)` 获得客户端，再传入 `Config{Store: tkcache.RedisStore, Namespace: "orders", RedisClient: client}`。缓存始终借用连接池；关闭缓存不关闭客户端、不删除 Redis 数据。连接超时、认证和 Cluster/Sentinel 参数由原生客户端配置。
+
+## 文件 Store
+
+```go
+cache, err := tkcache.New(tkcache.Config{
+    Store: tkcache.FileStore,
+    Namespace: "sessions",
+    FilePath: "/var/lib/myapp/sessions.json",
+})
+if err != nil {
+    return err
+}
+defer cache.Close()
+```
+
+`Config.Store` 的类型为 `StoreType`，支持 `MemoryStore`（默认）、`RedisStore` 和 `FileStore`。文件父目录必须存在；构造时拒绝符号链接、非普通文件及无版本的旧 `.dat` 文件。
+
+文件 Store 复用内存 Store 的 TTL 和原子操作，JSON 快照保存版本及绝对到期时间。成功修改前同步写入同目录 0600 临时文件、同步内容并原子重命名；持久化失败不会改变有效内存数据。快照权限为 0600。加载时跳过过期项，重启不延长 TTL；读取及后续写入也会清理过期项。每次修改写入完整快照，适用于小规模本地持久化。
+
+一个文件只能由一个活动 Cache 实例持有，不提供跨实例或跨进程文件锁。不同文件相互隔离；重新打开同一文件时，`Clear` 仅删除当前 Namespace 的业务数据和 Once 占位。`Close` 释放内存、取消回源并保留文件，不运行后台保存任务。原子替换保证快照完整，不额外承诺断电后的目录项持久性。
+
+原 `tktoken.NewFileStore` 的创建入口已移除，改用上面的配置并注入 `tktoken`。原快照 key 没有 tkcache 命名空间前缀；复用已有会话时需显式映射为 `tkcache:<Namespace>:data:<原 key>`，保留值和绝对到期时间，本模块不会自动转换。
 
 ## 数据与接口
 
@@ -43,11 +65,11 @@ Redis 模式先用 `tkredis.New(*redis.Options)` 或 `tkredis.Wrap(redis.Univers
 
 TTL 为 `time.Duration`：0 永久，负数报错，正数向上取整到毫秒。相同 key 的读写必须约定相同编码；nil 与零长度字节统一按空内容存储，不保留区别。写入和读取的切片均隔离，不共享可变底层数组。
 
-`WithCacheEmpty(false)` 使 nil 回源结果只返回、不回填；JSON typed nil 也按此处理。默认缓存成功的空结果，包括 JSON null。空字符串、0、false 和非 nil 空集合始终是有效数据。回源错误、JSON 错误和后端故障都原样返回，不自动降级查询数据库。
+`WithCacheEmpty(false)` 使 nil 回源结果只返回、不回填；JSON typed nil 也按此处理。默认缓存成功的空结果，包括 JSON null。空字符串、0、false 和非 nil 空集合始终是有效数据。回源错误、JSON 错误和Store 故障都原样返回，不自动降级查询数据库。
 
 ## 命名空间与生命周期
 
-Namespace 必填，只允许 ASCII 字母、数字、下划线和连字符；逻辑 key 必须非空。实际 Redis key 为 `tkcache:<Namespace>:data:<key>`，Once 为 `tkcache:<Namespace>:once:<key>`。相同 Redis 数据库和 Namespace 的实例共享数据；相同 Namespace 的内存实例仍相互独立。
+Namespace 必填，只允许 ASCII 字母、数字、下划线和连字符；逻辑 key 必须非空。实际存储 key 为 `tkcache:<Namespace>:data:<key>`，Once 为 `tkcache:<Namespace>:once:<key>`。相同 Redis 数据库和 Namespace 的实例共享数据；相同 Namespace 的内存实例仍相互独立。
 
 内存实例每个只有一个过期清理任务，默认每分钟扫描，可设置 `CleanupInterval`；读取仍立即识别过期项。首版没有容量限制或 LRU。`Clear` 同时删除当前 Namespace 的数据和 Once，占位不与业务数据碰撞。Redis 使用 SCAN 和单 key 删除，Cluster 遍历各主节点；不承诺跨进程并发写入时得到清空快照。
 
@@ -72,4 +94,4 @@ go test -race ./toolkit/tkcache
 go vet ./toolkit/tkcache
 ```
 
-测试使用内存和 miniredis，覆盖 TTL、原子操作、JSON、切片隔离、Namespace、回源合并/取消/失效及关闭。tktoken 另有基于两种后端的会话续期和撤销联调。未连接真实 MySQL、Redis、Kafka，也未验证真实 Redis Cluster。
+测试使用内存、临时文件和 miniredis，覆盖 TTL、原子操作、JSON、切片隔离、Namespace、回源合并/取消/失效及关闭。tktoken 另有基于三种 Store 的会话续期和撤销联调。未连接真实 MySQL、Redis、Kafka，也未验证真实 Redis Cluster。

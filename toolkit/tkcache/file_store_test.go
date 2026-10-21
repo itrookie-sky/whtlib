@@ -1,9 +1,8 @@
-package tktoken
+package tkcache
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
@@ -15,7 +14,7 @@ import (
 func TestFileStoreAtomicOperationsAndRestartExpiry(t *testing.T) {
 	ctx := t.Context()
 	path := filepath.Join(t.TempDir(), "sessions.json")
-	store, err := NewFileStore(path)
+	store, err := openTestFileCache(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,12 +41,13 @@ func TestFileStoreAtomicOperationsAndRestartExpiry(t *testing.T) {
 	if err != nil || !swapped {
 		t.Fatal("比较成功时应更新")
 	}
-	expiry := store.entries["session"].ExpiresAt
-	reopened, err := NewFileStore(path)
+	expiry := store.store.(*fileStore).memory.entries[store.prefix+"data:session"].expires
+	_ = store.Close()
+	reopened, err := openTestFileCache(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !reopened.entries["session"].ExpiresAt.Equal(expiry) {
+	if !reopened.store.(*fileStore).memory.entries[reopened.prefix+"data:session"].expires.Equal(expiry) {
 		t.Fatal("重新加载不应延长绝对到期时间")
 	}
 	read, found, err = reopened.Get(ctx, "session")
@@ -67,17 +67,19 @@ func TestFileStoreAtomicOperationsAndRestartExpiry(t *testing.T) {
 		t.Fatal("快照权限必须为 0600")
 	}
 	// 通过过去的时钟生成合法快照，重启后必须过滤已到期条目。
-	store, err = NewFileStore(path)
+	_ = reopened.Close()
+	store, err = openTestFileCache(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
 	past := time.Now().Add(-2 * time.Hour)
-	store.now = func() (value time.Time) { return past }
+	store.store.(*fileStore).memory.now = func() (value time.Time) { return past }
 	err = store.Set(ctx, "expired", []byte("data"), time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened, err = NewFileStore(path)
+	_ = store.Close()
+	reopened, err = openTestFileCache(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -89,12 +91,12 @@ func TestFileStoreAtomicOperationsAndRestartExpiry(t *testing.T) {
 
 func TestFileStoreConcurrentCreateAndLiveExpiry(t *testing.T) {
 	ctx := t.Context()
-	store, err := NewFileStore(filepath.Join(t.TempDir(), "sessions.json"))
+	store, err := openTestFileCache(t, filepath.Join(t.TempDir(), "sessions.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	now := time.Now()
-	store.now = func() (value time.Time) { return now }
+	store.store.(*fileStore).memory.now = func() (value time.Time) { return now }
 	results := make(chan bool, 16)
 	errorsCh := make(chan error, 16)
 	var group sync.WaitGroup
@@ -142,7 +144,7 @@ func TestFileStoreRejectsLegacyFileAndFailedPersistence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = NewFileStore(legacyPath)
+	_, err = openTestFileCache(t, legacyPath)
 	if !errors.Is(err, ErrInvalidConfig) {
 		t.Fatal("不应自动导入旧 .dat 格式")
 	}
@@ -151,7 +153,7 @@ func TestFileStoreRejectsLegacyFileAndFailedPersistence(t *testing.T) {
 		t.Fatal("不应改写旧格式文件")
 	}
 	path := filepath.Join(directory, "sessions.json")
-	store, err := NewFileStore(path)
+	store, err := openTestFileCache(t, path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -176,6 +178,29 @@ func TestFileStoreRejectsLegacyFileAndFailedPersistence(t *testing.T) {
 	if err != nil || !found || string(value) != "old" {
 		t.Fatal("失败写入改变了内存会话")
 	}
+
+	// 删除、续期和清空也必须等待持久化成功，失败不能报告已修改。
+	deleted, err := store.CompareAndDelete(ctx, "key", []byte("old"))
+	if err == nil || deleted {
+		t.Fatal("删除失败不应报告成功")
+	}
+	_, found, err = store.GetAndExpire(ctx, "key", 0)
+	if err == nil || found {
+		t.Fatal("续期失败不应返回成功结果")
+	}
+	ttl, exists, err := store.TTL(ctx, "key")
+	if err != nil || !exists || ttl <= 0 {
+		t.Fatal("续期失败改变了 TTL")
+	}
+	err = store.Clear(ctx)
+	if err == nil {
+		t.Fatal("清空持久化失败应报错")
+	}
+	wantValue(t, store, "key", "old", true)
+	temporary, err := filepath.Glob(filepath.Join(directory, ".tkcache-*.tmp"))
+	if err != nil || len(temporary) != 0 {
+		t.Fatal("失败写入遗留临时文件")
+	}
 	ctx, cancel := context.WithCancel(ctx)
 	cancel()
 	err = store.Set(ctx, "key", nil, 0)
@@ -184,27 +209,81 @@ func TestFileStoreRejectsLegacyFileAndFailedPersistence(t *testing.T) {
 	}
 }
 
-func TestFileStorePersistsOnlyOwnEntries(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "sessions.json")
-	store, err := NewFileStore(path)
+func openTestFileCache(t *testing.T, path string) (cache *Cache, err error) {
+	t.Helper()
+	cache, err = New(Config{Store: FileStore, Namespace: "file_test", FilePath: path})
+	if err == nil {
+		t.Cleanup(func() { _ = cache.Close() })
+	}
+	return
+}
+
+func TestFileStoreNamespaceAndClearSurviveRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "cache.json")
+	open := func(namespace string) (cache *Cache) {
+		t.Helper()
+		var err error
+		cache, err = New(Config{Store: FileStore, Namespace: namespace, FilePath: path})
+		if err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() { _ = cache.Close() })
+		return
+	}
+	first := open("first")
+	mustSet(t, first, "key", "first", 0)
+	ok, err := first.Once(t.Context(), "key", time.Hour)
+	if err != nil || !ok {
+		t.Fatal("占位失败", err)
+	}
+	_ = first.Close()
+	second := open("second")
+	wantValue(t, second, "key", "", false)
+	mustSet(t, second, "key", "second", 0)
+	_ = second.Close()
+	first = open("first")
+	wantValue(t, first, "key", "first", true)
+	ok, err = first.Once(t.Context(), "key", time.Hour)
+	if err != nil || ok {
+		t.Fatal("重启丢失占位", err)
+	}
+	err = first.Clear(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager := testToken(t, store, false)
-	issued, err := manager.GenToken(t.Context(), "user", json.RawMessage(`null`))
+	_ = first.Close()
+	first = open("first")
+	wantValue(t, first, "key", "", false)
+	ok, err = first.Once(t.Context(), "key", time.Hour)
+	if err != nil || !ok {
+		t.Fatal("Clear 未持久化占位删除", err)
+	}
+	_ = first.Close()
+	second = open("second")
+	wantValue(t, second, "key", "second", true)
+}
+
+func TestFileStoreRejectsInvalidPaths(t *testing.T) {
+	directory := t.TempDir()
+	target := filepath.Join(directory, "target.json")
+	store, err := openTestFileCache(t, target)
 	if err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := NewFileStore(path)
+	_ = store.Close()
+	link := filepath.Join(directory, "link.json")
+	err = os.Symlink(target, link)
 	if err != nil {
 		t.Fatal(err)
 	}
-	manager = testToken(t, reopened, false)
-	session, err := manager.ValidToken(t.Context(), issued.Token)
-	if err != nil || string(session.Data) != "null" {
-		t.Fatal("文件存储下的令牌或 JSON 空值未能恢复")
+	for _, path := range []string{directory, link} {
+		_, err = openTestFileCache(t, path)
+		if !errors.Is(err, ErrInvalidConfig) {
+			t.Fatalf("应拒绝路径 %q: %v", path, err)
+		}
 	}
-	if len(reopened.entries) != 1 {
-		t.Fatal("快照应仅包含本实例写入的会话")
+	_, err = openTestFileCache(t, filepath.Join(directory, "missing", "cache.json"))
+	if !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("父目录缺失应报错: %v", err)
 	}
 }

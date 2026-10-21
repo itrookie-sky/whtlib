@@ -64,7 +64,7 @@ func GetJSON[T any](ctx context.Context, cache *Cache, key string) (value T, fou
 	return
 }
 
-// GetOrLoadJSON 通过显式目标类型统一两种后端的对象语义。
+// GetOrLoadJSON 通过显式目标类型统一各 Store 的对象语义。
 func GetOrLoadJSON[T any](ctx context.Context, cache *Cache, key string, ttl time.Duration, loader func(ctx context.Context) (value T, err error), options ...LoadOption) (value T, err error) {
 	if cache == nil || loader == nil {
 		return value, ErrInvalidArgument

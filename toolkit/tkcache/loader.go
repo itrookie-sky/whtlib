@@ -117,7 +117,7 @@ func (c *Cache) runLoad(f *flight, ttl time.Duration, loader Loader, options loa
 	if allowed {
 		err = f.ctx.Err()
 		if err == nil {
-			_, err = c.backend.apply(f.ctx, physical, request{operation: opSet, value: bytes.Clone(value), ttl: ttl})
+			_, err = c.store.apply(f.ctx, physical, request{operation: opSet, value: bytes.Clone(value), ttl: ttl})
 		}
 	}
 	lock.Unlock()

@@ -10,7 +10,7 @@ whtlib/
 │   └── logger.go # 与 logx 打印方法一致的 Logger 接口
 ├── toolkit/      # 独立、通用、框架无关的组件，包名使用 tk 前缀
 │   ├── tkaes/    # AES 加解密与编码工具
-│   ├── tkcache/  # 内存与 Redis 字节缓存、文本/JSON、回源合并
+│   ├── tkcache/  # 内存、Redis 与文件字节缓存、文本/JSON、回源合并
 │   ├── tkredis/  # Redis 命令、Lua、集合及租约锁
 │   ├── tktoken/  # 会话、旧 token 协议、标准 HTTP 中间件
 │   └── tkkafka/  # Kafka 投递、消费、重试及分区提交
@@ -45,9 +45,9 @@ whtlib/
 
 ## 迁移组件
 
-- [tkcache](toolkit/tkcache/README.md)：内存和 Redis 后端，文本、JSON、TTL、原子比较与回源合并。
+- [tkcache](toolkit/tkcache/README.md)：内存、Redis 和文件 Store，文本、JSON、TTL、原子比较与回源合并。
 - [tkredis](toolkit/tkredis/README.md)：原生命令、显式 JSON、pipeline、Lua 重载、集合与持有者校验锁。
-- [tktoken](toolkit/tktoken/README.md)：显式协议和存储注入、CAS 会话续期/撤销、标准 net/http 中间件及文件存储。
+- [tktoken](toolkit/tktoken/README.md)：显式协议和存储注入、CAS 会话续期/撤销、标准 net/http 中间件，复用 tkcache 存储。
 - [tkkafka](toolkit/tkkafka/README.md)：保留原配置类型与分区约定，显式投递结果、失败不提交及有界关闭等待。
 - [reflectx](extension/reflectx/README.md)：类型和值分析、nil 判断、标签字段查找及转换赋值。
 

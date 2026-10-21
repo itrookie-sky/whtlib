@@ -36,7 +36,7 @@ var (
 	ErrConflict       = errors.New("tktoken: concurrent session update")
 )
 
-// Store 是会话消费方所需的最小存储接口；比较操作必须在后端原子执行。
+// Store 是会话消费方所需的最小存储接口；比较操作必须由 Store 原子执行。
 //
 // 读取、写入的字节不得由调用方与存储共享可变底层数组。
 // ttl 为零表示永久保存，负值无效；不存在的键不能通过比较操作创建。
@@ -64,7 +64,7 @@ type TokenCodec interface {
 
 // Config 保留原基础字段的类型；Timeout、MaxRefresh 的单位均为毫秒。
 //
-// CacheMode 仅保留配置映射，实际后端由传入的 Store 决定。
+// CacheMode 仅保留配置映射，实际存储由传入的 Store 决定。
 // Codec 必须显式选择；NewLegacy 使用 EncryptKey、TokenDelimiter 构建旧协议。
 // MiddlewareType 仅保留路由注册方式的兼容值，HTTP 路由由调用方注册。
 type Config struct {

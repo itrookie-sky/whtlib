@@ -21,7 +21,7 @@ type observedContext struct {
 	waiting chan struct{}
 }
 
-// 后端使用原始 ctx，避免 Redis 连接池调用 Done 被误判为已加入回源。
+// Store 使用原始 ctx，避免 Redis 连接池调用 Done 被误判为已加入回源。
 type unobservedStore struct{ store }
 
 func (s unobservedStore) get(ctx context.Context, key string) (value []byte, found bool, err error) {
@@ -65,8 +65,8 @@ func startLoad(cache *Cache, ctx context.Context, key string, loader Loader) (re
 }
 
 func TestSingleFlightAndCopies(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
-		cache.backend = unobservedStore{cache.backend}
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+		cache.store = unobservedStore{cache.store}
 		started, release := make(chan struct{}), make(chan struct{})
 		var calls atomic.Int32
 		loader := func(ctx context.Context) (value []byte, err error) {
@@ -110,8 +110,8 @@ func TestSingleFlightAndCopies(t *testing.T) {
 }
 
 func TestWaiterAndLeaderCancellation(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
-		cache.backend = unobservedStore{cache.backend}
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+		cache.store = unobservedStore{cache.store}
 		started, release := make(chan struct{}), make(chan struct{})
 		leaderCtx, cancelLeader := context.WithCancel(t.Context())
 		defer cancelLeader()
@@ -169,7 +169,7 @@ func TestWaiterAndLeaderCancellation(t *testing.T) {
 func TestMutationsPreventStaleWriteback(t *testing.T) {
 	for _, mutation := range []string{"set", "delete", "clear"} {
 		t.Run(mutation, func(t *testing.T) {
-			eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+			eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
 				started, release := make(chan struct{}), make(chan struct{})
 				old := startLoad(cache, t.Context(), "key", func(context.Context) (value []byte, err error) {
 					close(started)
@@ -208,7 +208,7 @@ func TestMutationsPreventStaleWriteback(t *testing.T) {
 }
 
 func TestLoaderErrorsAndClose(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
 		problem := errors.New("database failed")
 		_, err := cache.GetOrLoad(t.Context(), "error", 0, func(context.Context) (value []byte, err error) { return nil, problem })
 		if !errors.Is(err, problem) {
@@ -245,8 +245,8 @@ func TestLoaderErrorsAndClose(t *testing.T) {
 }
 
 func TestJSONWaiterUsesInitiatorEmptyPolicy(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
-		cache.backend = unobservedStore{cache.backend}
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+		cache.store = unobservedStore{cache.store}
 		started, release := make(chan struct{}), make(chan struct{})
 		leader := make(chan error, 1)
 		go func() {
@@ -285,14 +285,14 @@ func TestJSONWaiterUsesInitiatorEmptyPolicy(t *testing.T) {
 	})
 }
 
-func TestBackendFailureDoesNotLoad(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
-		backend, redisBackend := cache.backend.(*redisStore)
-		if !redisBackend {
+func TestStoreFailureDoesNotLoad(t *testing.T) {
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+		storeImpl, isRedisStore := cache.store.(*redisStore)
+		if !isRedisStore {
 			return
 		}
 		key, _ := cache.dataKey("wrongtype")
-		err := backend.client.LPush(t.Context(), key, "list").Err()
+		err := storeImpl.client.LPush(t.Context(), key, "list").Err()
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -302,7 +302,7 @@ func TestBackendFailureDoesNotLoad(t *testing.T) {
 			return []byte("fallback"), nil
 		})
 		if err == nil || called {
-			t.Fatalf("后端故障应直接返回: called=%v,err=%v", called, err)
+			t.Fatalf("Store 故障应直接返回: called=%v,err=%v", called, err)
 		}
 	})
 }

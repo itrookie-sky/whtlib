@@ -2,7 +2,9 @@ package tktoken
 
 import (
 	"crypto/rand"
+	"encoding/json"
 	"errors"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -15,10 +17,13 @@ import (
 var _ Store = (*tkcache.Cache)(nil)
 
 func TestCacheStoreIntegration(t *testing.T) {
-	for _, backend := range []tkcache.Backend{tkcache.BackendMemory, tkcache.BackendRedis} {
-		t.Run(string(backend), func(t *testing.T) {
-			config := tkcache.Config{Backend: backend, Namespace: "token_integration"}
-			if backend == tkcache.BackendRedis {
+	for _, storeType := range []tkcache.StoreType{tkcache.MemoryStore, tkcache.RedisStore, tkcache.FileStore} {
+		t.Run(string(storeType), func(t *testing.T) {
+			config := tkcache.Config{Store: storeType, Namespace: "token_integration"}
+			if storeType == tkcache.FileStore {
+				config.FilePath = filepath.Join(t.TempDir(), "sessions.json")
+			}
+			if storeType == tkcache.RedisStore {
 				server := miniredis.RunT(t)
 				client, err := tkredis.New(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
 				if err != nil {
@@ -73,5 +78,31 @@ func TestCacheStoreIntegration(t *testing.T) {
 				t.Fatalf("撤销后会话应缺失: %v", err)
 			}
 		})
+	}
+}
+
+func TestCacheFileStoreRestoresSession(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sessions.json")
+	config := tkcache.Config{Store: tkcache.FileStore, Namespace: "token_restart", FilePath: path}
+	store, err := tkcache.New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	manager := testToken(t, store, false)
+	issued, err := manager.GenToken(t.Context(), "user", json.RawMessage(`null`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = store.Close()
+	reopened, err := tkcache.New(config)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = reopened.Close() })
+	manager = testToken(t, reopened, false)
+	session, err := manager.ValidToken(t.Context(), issued.Token)
+	if err != nil || string(session.Data) != "null" {
+		t.Fatal("文件存储下的令牌或 JSON 空值未能恢复")
 	}
 }

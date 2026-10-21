@@ -11,18 +11,13 @@ import (
     "github.com/itrookie-sky/whtlib/toolkit/tktoken"
 )
 
-func buildToken() (manager *tktoken.Token, err error) {
+func buildToken(store tktoken.Store) (manager *tktoken.Token, err error) {
     // 密钥由部署配置提供，解码后必须为 16、24 或 32 字节。
     key, err := base64.StdEncoding.DecodeString(os.Getenv("TOKEN_KEY_BASE64"))
     if err != nil {
         return
     }
-    store, err := tktoken.NewFileStore("/var/lib/myapp/token-sessions.json")
-    if err != nil {
-        return
-    }
     manager, err = tktoken.NewLegacy(tktoken.Config{
-        CacheMode: tktoken.CacheModeFile,
         CacheKey: "myapp:sessions:",
         EncryptKey: key,
         Timeout: 60 * 60 * 1000,
@@ -41,7 +36,7 @@ func protect(manager *tktoken.Token, next http.Handler) (handler http.Handler) {
 }
 ```
 
-文件父目录必须已存在。`tkcache.Cache` 可直接作为 `Store` 注入；它的内存、Redis 后端选择及 Namespace 由调用方完成。核心不会创建、关闭或扫描借入的存储。
+`tkcache.Cache` 可直接作为 `Store` 注入。调用方通过 `Config.Store` 选择 `MemoryStore`、`RedisStore` 或 `FileStore`，配置 Namespace，并负责在停止使用后调用 `cache.Close()`。核心不会创建或关闭借入的存储。
 
 ## 核心接口
 
@@ -66,7 +61,7 @@ func protect(manager *tktoken.Token, next http.Handler) (handler http.Handler) {
 
 | 配置 | 类型及单位 | 默认与迁移说明 |
 | --- | --- | --- |
-| `CacheMode` | `int8` | 保留 Cache=1、Redis=2、File=3；实际后端完全由传入的 Store 决定，0 也可接受。 |
+| `CacheMode` | `int8` | 保留 Cache=1、Redis=2、File=3；实际存储完全由传入的 Store 决定，0 也可接受。 |
 | `CacheKey` | `string` | 默认 `tktoken:`，实际键为前缀与 userKey 拼接。 |
 | `Timeout` | `int`，毫秒 | 0 使用 10 天；构造时检查正数及 duration 范围。 |
 | `MaxRefresh` | `int`，毫秒 | 0 使用超时的一半，最小 1 毫秒；不得大于 Timeout。 |
@@ -105,13 +100,25 @@ codec, err := tktoken.NewLegacyCodec(key, "_")
 | Group、Bind、Global | 由调用方将标准中间件注册到对应路由范围。 |
 | 源 HTTP 回调、响应结构、日志 | 使用 `HTTPOptions` 和应用层响应；本包不记录 token、密钥或完整会话。 |
 
-## 文件存储
+## 存储配置
 
-`FileStore` 仅持久化本实例条目，JSON 快照带版本及绝对到期时间。每次写操作使用同目录 0600 临时文件、同步文件内容、原子重命名；失败写入不会改变有效内存会话。快照本身权限也是 0600。加载时跳过已过期条目，重启不会重新授予完整 TTL。
+三种存储统一由 [tkcache](../tkcache/README.md) 提供，tktoken 只消费 `Store` 接口。文件存储示例：
 
-每个快照文件只允许一个 FileStore 实例持有；互斥锁仅保护本实例线程，不提供多进程文件锁。文件不保持打开，也无后台保存任务，无需 Close。原子替换保证完整快照可见；不额外承诺断电后的目录项持久性。
+```go
+cache, err := tkcache.New(tkcache.Config{
+    Store: tkcache.FileStore,
+    Namespace: "token_sessions",
+    FilePath: "/var/lib/myapp/token-sessions.json",
+})
+if err != nil {
+    return err
+}
+defer cache.Close() // 应放在持有整个服务生命周期的函数中。
+manager, err := buildToken(cache)
+// 检查 err 后将 manager 交给 HTTP 路由。
+```
 
-`Store` 的零 TTL 表示永久保存，负 TTL 无效；Token 创建的会话始终使用正 TTL。文件存储拒绝直接打开符号链接或非普通文件，不接受旧 `.dat` 的无版本 JSON。导入旧会话需由调用方单独实现明确的到期策略。
+该示例需导入 `github.com/itrookie-sky/whtlib/toolkit/tkcache`；父目录必须存在，一个快照只允许一个活动缓存实例持有。原 `NewFileStore` 入口已移除，已有文件的 key 映射和持久化语义见 tkcache 文档。会话始终使用正 TTL。
 
 ## 离线验证
 
@@ -120,4 +127,4 @@ go test -race ./toolkit/tktoken
 go vet ./toolkit/tktoken
 ```
 
-测试不连接真实 MySQL、Redis 或 Kafka；覆盖独立 OpenSSL 协议向量、错误填充、配置、数字精度、MultiLogin、并发 CAS、旧令牌失效、HTTP 提取与路径规则，以及文件绝对到期、权限、原子比较和失败写入。
+测试不连接真实 MySQL、Redis 或 Kafka；覆盖独立 OpenSSL 协议向量、错误填充、配置、数字精度、MultiLogin、并发 CAS、旧令牌失效、HTTP 提取与路径规则，以及三种 Store 的续期、撤销和文件重启恢复。文件 TTL、权限及写入回滚由 tkcache 测试覆盖。

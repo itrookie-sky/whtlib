@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -15,10 +16,13 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-func newTestCache(t *testing.T, backend Backend, namespace string, server *miniredis.Miniredis) (cache *Cache) {
+func newTestCache(t *testing.T, storeType StoreType, namespace string, server *miniredis.Miniredis) (cache *Cache) {
 	t.Helper()
-	config := Config{Backend: backend, Namespace: namespace}
-	if backend == BackendRedis {
+	config := Config{Store: storeType, Namespace: namespace}
+	if storeType == FileStore {
+		config.FilePath = filepath.Join(t.TempDir(), "cache.json")
+	}
+	if storeType == RedisStore {
 		native := redis.NewClient(&redis.Options{Addr: server.Addr(), MaxRetries: -1})
 		t.Cleanup(func() { _ = native.Close() })
 		var err error
@@ -36,17 +40,17 @@ func newTestCache(t *testing.T, backend Backend, namespace string, server *minir
 	return
 }
 
-func eachBackend(t *testing.T, test func(t *testing.T, cache *Cache, advance func(time.Duration))) {
+func eachStore(t *testing.T, test func(t *testing.T, cache *Cache, advance func(time.Duration))) {
 	t.Helper()
-	for _, backend := range []Backend{BackendMemory, BackendRedis} {
-		t.Run(string(backend), func(t *testing.T) {
+	for _, storeType := range []StoreType{MemoryStore, RedisStore, FileStore} {
+		t.Run(string(storeType), func(t *testing.T) {
 			var server *miniredis.Miniredis
 			advance := time.Sleep
-			if backend == BackendRedis {
+			if storeType == RedisStore {
 				server = miniredis.RunT(t)
 				advance = server.FastForward
 			}
-			test(t, newTestCache(t, backend, "test", server), advance)
+			test(t, newTestCache(t, storeType, "test", server), advance)
 		})
 	}
 }
@@ -68,7 +72,7 @@ func wantValue(t *testing.T, cache *Cache, key, expected string, expectedFound b
 }
 
 func TestBytesTTLAndAtomic(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, advance func(time.Duration)) {
+	eachStore(t, func(t *testing.T, cache *Cache, advance func(time.Duration)) {
 		ctx := t.Context()
 		wantValue(t, cache, "missing", "", false)
 		ttl, found, err := cache.TTL(ctx, "missing")
@@ -151,7 +155,7 @@ func TestBytesTTLAndAtomic(t *testing.T) {
 }
 
 func TestJSONAndEmptyPolicy(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
 		type user struct {
 			ID int64 `json:"id"`
 		}
@@ -197,7 +201,7 @@ func TestJSONAndEmptyPolicy(t *testing.T) {
 }
 
 func TestAtomicContendersAndNamespace(t *testing.T) {
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
 		var winners atomic.Int32
 		var workers sync.WaitGroup
 		for range 24 {
@@ -234,9 +238,9 @@ func TestAtomicContendersAndNamespace(t *testing.T) {
 		}
 	})
 	server := miniredis.RunT(t)
-	first := newTestCache(t, BackendRedis, "one", server)
-	shared := newTestCache(t, BackendRedis, "one", server)
-	other := newTestCache(t, BackendRedis, "two", server)
+	first := newTestCache(t, RedisStore, "one", server)
+	shared := newTestCache(t, RedisStore, "one", server)
+	other := newTestCache(t, RedisStore, "two", server)
 	mustSet(t, first, "key", "shared", 0)
 	mustSet(t, other, "key", "other", 0)
 	wantValue(t, shared, "key", "shared", true)
@@ -250,19 +254,19 @@ func TestAtomicContendersAndNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := first.backend.(*redisStore).client
+	raw := first.store.(*redisStore).client
 	err = raw.Ping(t.Context()).Err()
 	if err != nil {
 		t.Fatalf("关闭缓存不能关闭借用客户端: %v", err)
 	}
-	memory := newTestCache(t, BackendMemory, "same", nil)
-	separate := newTestCache(t, BackendMemory, "same", nil)
+	memory := newTestCache(t, MemoryStore, "same", nil)
+	separate := newTestCache(t, MemoryStore, "same", nil)
 	mustSet(t, memory, "key", "private", 0)
 	wantValue(t, separate, "key", "", false)
 }
 
 func TestInvalidArgumentsAndLifecycle(t *testing.T) {
-	for _, config := range []Config{{}, {Namespace: "*"}, {Namespace: "ok", Backend: "bad"}, {Namespace: "ok", Backend: BackendRedis}} {
+	for _, config := range []Config{{}, {Namespace: "*"}, {Namespace: "ok", Store: "bad"}, {Namespace: "ok", Store: RedisStore}, {Namespace: "ok", Store: FileStore}} {
 		_, err := New(config)
 		if !errors.Is(err, ErrInvalidConfig) {
 			t.Fatalf("错误配置应拒绝: %+v,%v", config, err)
@@ -274,7 +278,7 @@ func TestInvalidArgumentsAndLifecycle(t *testing.T) {
 			t.Fatalf("毫秒向上取整: %v -> %v,%v", ttl, value, err)
 		}
 	}
-	eachBackend(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
+	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
 		err := cache.Set(t.Context(), "key", nil, -1)
 		if !errors.Is(err, ErrInvalidArgument) {
 			t.Fatal(err)

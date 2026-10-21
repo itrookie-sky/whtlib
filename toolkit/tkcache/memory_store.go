@@ -16,10 +16,11 @@ type memoryStore struct {
 	mu         sync.Mutex
 	entries    map[string]entry
 	stop, done chan struct{}
+	now        func() time.Time
 }
 
 func newMemoryStore(interval time.Duration) (store *memoryStore) {
-	store = &memoryStore{entries: make(map[string]entry), stop: make(chan struct{}), done: make(chan struct{})}
+	store = &memoryStore{entries: make(map[string]entry), now: time.Now, stop: make(chan struct{}), done: make(chan struct{})}
 	go store.cleanup(interval)
 	return
 }
@@ -46,7 +47,7 @@ func (m *memoryStore) cleanup(interval time.Duration) {
 
 func (m *memoryStore) lookup(key string) (item entry, found bool) {
 	item, found = m.entries[key]
-	if found && !item.expires.IsZero() && !time.Now().Before(item.expires) {
+	if found && !item.expires.IsZero() && !m.now().Before(item.expires) {
 		delete(m.entries, key)
 		found = false
 	}
@@ -63,7 +64,7 @@ func copyValue(value []byte) (result []byte) {
 func (m *memoryStore) put(key string, value []byte, ttl time.Duration) {
 	item := entry{value: copyValue(value)}
 	if ttl > 0 {
-		item.expires = time.Now().Add(ttl)
+		item.expires = m.now().Add(ttl)
 	}
 	m.entries[key] = item
 }
@@ -142,7 +143,7 @@ func (m *memoryStore) ttl(ctx context.Context, key string) (ttl time.Duration, f
 	}
 	item, found := m.lookup(key)
 	if found && !item.expires.IsZero() {
-		ttl = max(time.Until(item.expires), 0)
+		ttl = max(item.expires.Sub(m.now()), 0)
 	}
 	return
 }
