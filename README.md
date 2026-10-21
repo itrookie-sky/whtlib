@@ -9,6 +9,7 @@ whtlib/
 ├── adapter/      # 供多个包复用的通用适配契约
 │   └── logger.go # 与 logx 打印方法一致的 Logger 接口
 ├── toolkit/      # 独立、通用、框架无关的组件，包名使用 tk 前缀
+│   ├── tkaes/    # AES 加解密与编码工具
 │   ├── tkcache/  # 内存与 Redis 字节缓存、文本/JSON、回源合并
 │   ├── tkredis/  # Redis 命令、Lua、集合及租约锁
 │   ├── tktoken/  # 会话、旧 token 协议、标准 HTTP 中间件

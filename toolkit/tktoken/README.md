@@ -76,7 +76,7 @@ func protect(manager *tktoken.Token, next http.Handler) (handler http.Handler) {
 | `MiddlewareType` | `uint` | 保留 Group=1、Bind=2、Global=3 的配置值；新 HTTP 层由调用方注册。 |
 | `Codec` | `TokenCodec` | `New` 必填；实现须支持并发，并对相同身份产生相同字符串。 |
 
-`LegacyCodec` 使用标准库复现已核对的 GoFrame v2.9.0 `gaes`：CBC、严格 PKCS7、默认 IV 和标准 Base64，明文为 `userKey + delimiter + uuid`。新 UUID 使用 `crypto/rand` 的 16 字节转 32 位十六进制。用户标识或 UUID 包含分隔符时明确报错，避免旧解析规则的歧义。固定 IV 和无独立认证标签是旧协议限制；该入口只用于已有协议的兼容，不替换为 JWT，也不复用 `toolkit/aes` 的 ECB 实现。
+`LegacyCodec` 使用标准库复现已核对的 GoFrame v2.9.0 `gaes`：CBC、严格 PKCS7、默认 IV 和标准 Base64，明文为 `userKey + delimiter + uuid`。新 UUID 使用 `crypto/rand` 的 16 字节转 32 位十六进制。用户标识或 UUID 包含分隔符时明确报错，避免旧解析规则的歧义。固定 IV 和无独立认证标签是旧协议限制；该入口只用于已有协议的兼容，不替换为 JWT，也不复用 `toolkit/tkaes` 的 ECB 实现。
 
 ```go
 codec, err := tktoken.NewLegacyCodec(key, "_")
