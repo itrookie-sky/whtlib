@@ -2,7 +2,7 @@
 
 `tkcache` 位于 `toolkit/tkcache`，参考 `go-gf-lib/plugins/plcache` 迁移通用缓存能力，提供内存和 Redis 两种后端，用于缓存文本数据与 MySQL 查询结果。业务通过统一的 `Cache` 使用 TTL、原子写入、删除和按需回源；后端统一保存字节数据，文本与 JSON 编解码由上层便捷接口处理。Redis 客户端与脚本能力由同步迁移的 `tkredis` 提供。
 
-状态：设计草案，尚未实施。已确认的需求为模块路径与命名、文本与 MySQL 查询结果缓存，以及同时支持内存和 Redis。本模块属于 [go-gf-lib 通用模块迁移设计](./2026-10-21-toolkit-migration-design.md) 的一部分，同批迁移还包括 plredis、pltoken、plkafka。下述接口、配置默认值和实现边界为建议设计，供后续确认。
+状态：已实现，已通过内存与 miniredis 模块测试、race 检查。支持文本及 MySQL 查询结果缓存，同时提供内存和 Redis 后端。本模块属于 [go-gf-lib 通用模块迁移设计](./2026-10-21-toolkit-migration-design.md) 的一部分，同批迁移还包括 plredis、pltoken、plkafka 与反射扩展。
 
 ## 目标与范围
 
@@ -27,7 +27,7 @@
     → 文本方法或 JSON 辅助函数
     → Cache：参数校验、Namespace、TTL、回源合并、生命周期
     → 私有 store 接口
-        ├── memoryStore：map、读写锁、过期清理
+        ├── memoryStore：map、互斥锁、过期清理
         └── redisStore：tkredis → go-redis、Redis String、服务端 TTL
 ```
 
@@ -196,11 +196,11 @@ Redis 使用单条 `SET` 同时设置值与到期时间，条件写入通过 `NX
 
 ## 内存后端
 
-使用 `map[string]entry` 保存字节数据与到期时间，以 `sync.RWMutex` 保护并发访问。到期时间保留 `time.Time` 的单调时钟信息，不转换为秒级整数。
+使用 `map[string]entry` 保存字节数据与到期时间，以 `sync.Mutex` 保护并发访问，读取过期条目可在同一临界区内删除。到期时间保留 `time.Time` 的单调时钟信息，不转换为秒级整数。
 
 过期处理结合读取时检查和后台定期扫描：读取保证不会命中过期数据，后台扫描回收无人访问的数据。每个实例只启动一个维护 goroutine，不为每个 key 创建 timer。
 
-读取发现过期项后如需升级到写锁，必须再次检查当前条目，避免误删期间被其他调用更新的新值。loader 不在数据锁内执行。
+过期检查和删除在同一临界区内完成，避免误删其他调用更新的新值。loader 不在数据锁内执行。
 
 首版不设置容量上限，也不实现 LRU；无 TTL 的条目持续保留到删除、清理或关闭。调用方需要控制条目数量和单条数据大小，不能将 TTL 清理视为容量限制。
 
@@ -298,16 +298,13 @@ if err != nil {
 
 ```text
 toolkit/tkcache/
-├── cache.go       # Cache、公共字节操作与后端契约
-├── config.go      # Backend、Config、默认值与校验
+├── cache.go       # 配置、Cache、公共操作、原子比较、批量与生命周期
 ├── memory.go      # 内存存储、TTL 与定时清理
 ├── redis.go       # 基于 tkredis 的缓存后端和 Namespace 清理
-├── batch.go       # 批量读写及部分成功结果
-├── atomic.go      # 读后删除、条件比较与 Once
-├── string.go      # 文本便捷方法
-├── json.go        # JSON 编解码与泛型辅助函数
+├── json.go        # 文本、JSON 编解码与泛型辅助函数
 ├── loader.go      # 回源合并、取消和写回协调
-├── errors.go      # 可识别错误
+├── cache_test.go  # 两种后端的数据与 TTL 行为
+├── loader_test.go # 回源并发、取消、失效和关闭
 └── README.md      # 两种后端的用法与行为边界
 ```
 
@@ -328,4 +325,4 @@ toolkit/tkcache/
 | Redis 客户端复用与关闭             | 关闭缓存包装不关闭共享客户端，不删除服务端数据。           |
 | MySQL 事务提交与缓存删除失败       | 提交后执行失效，失败可由业务识别和补偿。                   |
 
-上述为实现验收依据，当前交付仅包含设计文档。
+上述本地行为已通过内存、miniredis 及 tktoken 两种后端联调验证。未连接真实 MySQL、Redis、Kafka，也未验证真实 Cluster；数据库事务与缓存删除补偿仍由业务实现。使用示例见模块 README，执行记录见 [迁移实施计划](../plans/2026-10-21-toolkit-migration.md)。

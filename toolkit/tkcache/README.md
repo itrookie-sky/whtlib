@@ -1,0 +1,75 @@
+# tkcache
+
+统一的字节缓存，支持独立内存实例和 Redis。文本直接存取，MySQL 等查询结果通过调用方提供的 loader 与泛型 JSON 函数缓存，不依赖数据库驱动或 ORM。
+
+```go
+cache, err := tkcache.New(tkcache.Config{
+    Backend: tkcache.BackendMemory,
+    Namespace: "orders",
+})
+if err != nil {
+    return err
+}
+defer cache.Close()
+
+err = cache.SetString(ctx, "notice", "服务已就绪", 10*time.Minute)
+if err != nil {
+    return err
+}
+text, found, err := cache.GetString(ctx, "notice")
+
+// loadUser 由业务实现，签名为 func(context.Context) (*User, error)。
+user, err := tkcache.GetOrLoadJSON[*User](ctx, cache, "user:123", 5*time.Minute, loadUser)
+```
+
+Redis 模式先用 `tkredis.New(*redis.Options)` 或 `tkredis.Wrap(redis.UniversalClient)` 获得客户端，再传入 `Config{Backend: tkcache.BackendRedis, Namespace: "orders", RedisClient: client}`。缓存始终借用连接池；关闭缓存不关闭客户端、不删除 Redis 数据。连接超时、认证和 Cluster/Sentinel 参数由原生客户端配置。
+
+## 数据与接口
+
+| 接口 | 行为 |
+| --- | --- |
+| `Get`、`GetString` | 返回值、found、error；普通读取不续期，空内容仍是命中。 |
+| `Set`、`SetString`、`SetJSON` | 覆盖内容和 TTL；JSON 编码失败不改变原数据。 |
+| `GetJSON[T]` | 按目标类型解码；无效 JSON 保留 found=true 并返回错误，动态数字为 json.Number。 |
+| `GetOrLoad`、`GetOrLoadJSON[T]` | 未命中时回源，同实例同 key 合并查询。 |
+| `SetIfAbsent` | 原子条件创建，已过期等同不存在。 |
+| `GetOrSet` | 原子返回已有内容或写入候选值，命中不续期。 |
+| `GetAndExpire`、`GetAndDelete` | 原子读后续期或删除。 |
+| `CompareAndSwap`、`CompareAndDelete` | 比较原始字节，匹配后才更新/删除；缺失不能匹配成功。 |
+| `TTL`、`Exists`、`Delete` | TTL 为 0、true 表示永久，为 0、false 表示不存在。 |
+| `GetMap`、`SetMap` | 批量操作；缺失项不进入读取结果，跨 key 无事务，可能部分完成。 |
+| `Once` | 独立区域的正 TTL 原子占位，不承诺业务 exactly-once。 |
+| `Clear`、`Close` | 清当前命名空间；关闭幂等，停止维护、取消回源并唤醒等待者。 |
+
+TTL 为 `time.Duration`：0 永久，负数报错，正数向上取整到毫秒。相同 key 的读写必须约定相同编码；nil 与零长度字节统一按空内容存储，不保留区别。写入和读取的切片均隔离，不共享可变底层数组。
+
+`WithCacheEmpty(false)` 使 nil 回源结果只返回、不回填；JSON typed nil 也按此处理。默认缓存成功的空结果，包括 JSON null。空字符串、0、false 和非 nil 空集合始终是有效数据。回源错误、JSON 错误和后端故障都原样返回，不自动降级查询数据库。
+
+## 命名空间与生命周期
+
+Namespace 必填，只允许 ASCII 字母、数字、下划线和连字符；逻辑 key 必须非空。实际 Redis key 为 `tkcache:<Namespace>:data:<key>`，Once 为 `tkcache:<Namespace>:once:<key>`。相同 Redis 数据库和 Namespace 的实例共享数据；相同 Namespace 的内存实例仍相互独立。
+
+内存实例每个只有一个过期清理任务，默认每分钟扫描，可设置 `CleanupInterval`；读取仍立即识别过期项。首版没有容量限制或 LRU。`Clear` 同时删除当前 Namespace 的数据和 Once，占位不与业务数据碰撞。Redis 使用 SCAN 和单 key 删除，Cluster 遍历各主节点；不承诺跨进程并发写入时得到清空快照。
+
+所有数据操作要求非 nil ctx。关闭后返回 `ErrClosed`；配置及参数错误分别通过 `errors.Is` 匹配 `ErrInvalidConfig`、`ErrInvalidArgument`。Redis 故障不会当作普通未命中；网络错误或取消也不保证已发送的命令未执行。
+
+## 回源和 MySQL 一致性
+
+同一次回源由首个调用者决定 loader、ctx、TTL 和选项。等待者可独立取消，首个调用者取消则终止本轮共享回源。loader 在缓存锁外执行，应将收到的 ctx 传给数据库，不能递归等待同实例同 key 的回源。
+
+同实例更新、删除或 Clear 后，旧回源不能覆盖后续缓存，已有等待者仍可能拿到旧查询快照。后续调用不再加入该旧任务。此协调只限当前实例，不提供跨实例分布式 singleflight 或数据库强一致性。loader panic 转为 `ErrLoaderPanic`，不缓存；Close 不无限等待忽略 ctx 的业务回调。
+
+MySQL 写入建议先提交事务，再删除相关详情和列表缓存。删除失败需由业务重试或补偿；TTL 只约束陈旧时间。缓存 key 应包含租户、筛选、排序、分页及必要的数据版本。模块不扫描或导入旧 plcache Redis key。
+
+## 从 plcache 迁移
+
+普通 Get 不再隐式续期，需要旧行为时使用 `GetAndExpire`；`GetOrSetFunc`/`GetOrSetFuncLock` 使用 `GetOrLoad` 和 `WithCacheEmpty`，真正合并回源；`SetIfNotExist` 使用 `SetIfAbsent`；`GetExpire`/`IsExist` 使用 `TTL`/`Exists`。集合和有序集合迁至 tkredis，未实现的 Hash/List TODO 不计入迁移。
+
+## 离线验证
+
+```sh
+go test -race ./toolkit/tkcache
+go vet ./toolkit/tkcache
+```
+
+测试使用内存和 miniredis，覆盖 TTL、原子操作、JSON、切片隔离、Namespace、回源合并/取消/失效及关闭。tktoken 另有基于两种后端的会话续期和撤销联调。未连接真实 MySQL、Redis、Kafka，也未验证真实 Redis Cluster。

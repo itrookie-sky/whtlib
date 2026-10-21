@@ -8,17 +8,22 @@ A lightweight, framework-independent Go library providing reusable core componen
 whtlib/
 ├── adapter/      # 供多个包复用的通用适配契约
 │   └── logger.go # 与 logx 打印方法一致的 Logger 接口
-├── lib/          # 通用功能封装
+├── toolkit/      # 独立、通用、框架无关的组件，包名使用 tk 前缀
+│   ├── tkcache/  # 内存与 Redis 字节缓存、文本/JSON、回源合并
+│   ├── tkredis/  # Redis 命令、Lua、集合及租约锁
+│   ├── tktoken/  # 会话、旧 token 协议、标准 HTTP 中间件
+│   └── tkkafka/  # Kafka 投递、消费、重试及分区提交
 ├── extension/    # Go 标准库功能扩展
 │   ├── jsonx/    # encoding/json 扩展
-│   └── logx/     # slog 扩展及文件轮转
+│   ├── logx/     # slog 扩展及文件轮转
+│   └── reflectx/ # reflect 扩展，合并 plreflect 与 lib/libreflect
 └── platform/     # 第三方平台 API 封装
 ```
 
 | 目录 | 职责 |
 | --- | --- |
 | `adapter` | 按需定义多个包共享的适配接口；仅组件自身使用的接口放在组件内部。 |
-| `lib` | 封装可复用的通用功能和组件，例如 Redis 客户端封装。 |
+| `toolkit` | 封装可复用的通用功能和组件，包名使用 tk 前缀，例如 tkcache、tkredis。 |
 | `extension` | 扩展 Go 官方标准库功能，例如 `jsonx` 提供关闭 HTML 转义的 JSON 编码函数。 |
 | `platform` | 封装第三方平台 API，按平台和服务组织目录，例如 `aliyun/oss/`。该路径仅为规划示例，暂未创建。 |
 
@@ -33,15 +38,16 @@ whtlib/
 
 ## 通用日志接口
 
-其他组件可依赖 `adapter.Logger[L]`，由调用方注入 `*logx.Logger` 或 `logx.Default()`：
+组件可选注入现有非泛型 `adapter.Logger`，包含 `Skip(n) Logger`、Debug/Info/Warn/Error 及四个格式化方法。普通参数按空格拼接正文；接口不包含 Log、SetConfig 或 Close。adapter 仅依赖标准库，日志配置与生命周期由调用方管理。
 
-```go
-var logger adapter.Logger[*logx.Logger] = logx.Default()
-logger.Info(ctx, "订单", 123, "完成")
-logger.Infof(ctx, "订单 %d 完成", 123)
-```
+接入具体日志库时需满足完整方法签名。当前 `logx.Logger.Skip` 返回 `*logx.Logger`，需要调用方提供包装器转换为 `adapter.Logger` 的返回类型；Go 接口不支持返回类型协变。
 
-接口使用泛型 L 指定 Skip 的返回类型，包含 Skip、Log、Debug、Info、Warn、Error 以及四个带 f 的格式化方法。普通参数按空格拼接正文，不按 slog 键值对解析。adapter 只依赖标准库，不导入 logx；logx 包包含编译期接口检查。SetConfig 和 Close 由创建实例的调用方管理，不属于通用打印接口。logx 的 Skip 返回独立实例，调用方仍需单独 Close；泛型接口不改变其生命周期。
+## 迁移组件
 
+- [tkcache](toolkit/tkcache/README.md)：内存和 Redis 后端，文本、JSON、TTL、原子比较与回源合并。
+- [tkredis](toolkit/tkredis/README.md)：原生命令、显式 JSON、pipeline、Lua 重载、集合与持有者校验锁。
+- [tktoken](toolkit/tktoken/README.md)：显式协议和存储注入、CAS 会话续期/撤销、标准 net/http 中间件及文件存储。
+- [tkkafka](toolkit/tkkafka/README.md)：保留原配置类型与分区约定，显式投递结果、失败不提交及有界关闭等待。
+- [reflectx](extension/reflectx/README.md)：类型和值分析、nil 判断、标签字段查找及转换赋值。
 
-需要在通用组件中继续调用 Skip 返回值的日志方法时，可以使用约束 `L adapter.Logger[L]`；这样组件不需要依赖具体的 logx 类型。
+迁移组件不依赖 GF 或源 go-gf-lib。旧 Redis key 和会话文件不自动导入；具体协议边界见各包说明。Kafka 沿用 confluent 驱动，保留其 CGO 与平台构建要求。

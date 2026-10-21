@@ -1,8 +1,8 @@
 # go-gf-lib 通用模块迁移设计
 
-将 `go-gf-lib` 中的 `plcache`、`plredis`、`pltoken`、`plkafka` 沉淀到 `whtlib/toolkit`，将 `plreflect` 迁入 `whtlib/extension/reflectx`，移除 GoFrame 及源仓库内部依赖，保留通用能力，并明确配置、数据协议和运行行为的迁移关系。
+将 `go-gf-lib` 中的 `plcache`、`plredis`、`pltoken`、`plkafka` 沉淀到 `whtlib/toolkit`，将 `plreflect` 与 `lib/libreflect` 合并迁入 `whtlib/extension/reflectx`，移除 GoFrame 及源仓库内部依赖，保留通用能力，并明确配置、数据协议和运行行为的迁移关系。
 
-状态：设计草案。已确认五个模块的迁移范围、toolkit 的 `tk` 包名前缀、extension 的 `x` 包名后缀，以及缓存同时支持内存和 Redis。本文记录源码核对结果与建议设计，当前不包含代码迁移。
+状态：五个模块已实现，并已新增不依赖真实基础设施的模块测试。toolkit 使用 `tk` 包名前缀，extension 使用 `x` 后缀，缓存同时支持内存和 Redis。实际入口和迁移差异见各模块 README，最终验证见 [实施计划](../plans/2026-10-21-toolkit-migration.md)。
 
 ## 源码基线与模块映射
 
@@ -16,6 +16,7 @@
 | `plugins/pltoken` | `toolkit/tktoken` | token 编解码、会话存储、校验、续期、撤销及 HTTP 适配。            |
 | `plugins/plkafka` | `toolkit/tkkafka` | Kafka 生产、消费、批量消费、重试、offset 与资源关闭。             |
 | `plugins/plreflect` | `extension/reflectx` | 基于标准库 reflect 的类型与值解引用、安全取值及 nil 判断。 |
+| `lib/libreflect` | `extension/reflectx` | 标签字段查找、转换赋值，使用标准库错误替代 GF 错误。 |
 
 `extension` 用于 Go 标准库的功能扩展，reflectx 基于标准库 reflect，使用 `x` 后缀。其余四个模块属于独立组件，使用 `tk` 前缀。导出类型和函数不重复增加包名前后缀。
 
@@ -87,9 +88,9 @@ reflectx 仅依赖 Go 标准库，不反向导入 toolkit、adapter 或平台组
 
 ## reflectx 设计
 
-详细接口、字段类型和边界行为见 [reflectx 标准库扩展设计](./2026-10-21-reflectx-design.md)。来源为 `plugins/plreflect`，定位为标准库 `reflect` 的扩展，目标路径 `extension/reflectx`，包名 `reflectx`。
+详细接口、字段类型和边界行为见 [reflectx 标准库扩展设计](./2026-10-21-reflectx-design.md)。来源为 `plugins/plreflect` 与用户补充的 `lib/libreflect`，定位为标准库 `reflect` 的扩展，目标路径 `extension/reflectx`，包名 `reflectx`。
 
-保留 `OriginValueAndKind`、`OriginTypeAndKind`、`ValueToInterface`、`IsNil` 四个函数及两个输出结构体的现有字段类型。实现只依赖标准库，不绑定 Redis、缓存或业务框架。
+保留 `OriginValueAndKind`、`OriginTypeAndKind`、`ValueToInterface`、`IsNil` 和两个输出结构体的现有字段类型，并迁入 `GetFieldByTag`、`SetFieldValue`，共六个函数。实现只依赖标准库，不绑定 Redis、缓存或业务框架。
 
 迁移时明确 nil、typed nil、无效 reflect.Value、多级指针和不可直接 Interface 的值等边界。无效反射值先校验再取 Type 或执行解引用，不把空字符串、0、false 与 nil 混为一谈。与源实现不同的边界修正单独记录，不静默改变普通有效输入的行为。
 
@@ -175,7 +176,7 @@ Redis 多 key 操作必须说明单机或同 slot 原子性限制。Cluster 中�
 
 | 原字段              | 原类型与单位 | 迁移约束                                                        |
 | --------------------- | -------------- | ----------------------------------------------------------------- |
-| CacheMode           | `int8`       | 兼容配置保留枚举含义，构造时映射到存储适配器。                  |
+| CacheMode           | `int8`       | 保留兼容枚举；实际存储由调用方注入 Store，不隐式创建。          |
 | CacheKey            | `string`     | 保留业务前缀含义；与 tkcache Namespace 的组合必须显式映射。     |
 | Timeout、MaxRefresh | `int`，毫秒  | 保留原类型与单位，转换为 duration 时检查范围。                  |
 | TokenDelimiter      | `string`     | 旧协议解析保留；不能与用户标识的合法内容发生未处理的歧义。      |
@@ -234,11 +235,11 @@ HTTP 适配采用 `func(http.Handler) http.Handler` 形式；路径规则和错�
 | TopicConfig.Groups                                               | `[]string`。                                        |
 | ProducerMessage.Key、ProducerMessage.Data                        | 分别保留 `string`、`any`。                          |
 
-源码配置中的 BufferMemory 是否真正下传、BatchSize 同时参与生产与消费参数等，需要在迁移配置映射时明确处理，不根据字段名猜测含义或静默改变数值单位。
+核对后明确：源 BufferMemory 未下传，新实现为非零值采用字节单位，向上取整为 KiB 映射 queue.buffering.max.kbytes；零值保留驱动默认。BatchSize 沿用原行为，同时作为生产 batch.size 字节数与消费批次消息数，已在代码和 README 注明。
 
 ### 消息编码与确认
 
-源 SendMessage 会将对象转成 map 并删除数据库时间字段。通用消息层使用显式 Encoder，不内置业务字段删除。旧消费者依赖该格式时，在调用方提供兼容 Encoder，先核对消息样本后替换；不能直接用 json.Marshal 任意对象后声称与旧消息等价。
+源 SendMessage 会将对象转成 map 并删除数据库时间字段。默认 JSONEncoder 不删除业务字段；依赖旧格式时显式选择 LegacyEncoder，过滤已核对的六个顶层时间字段，不复现 gconv.Map 对任意对象的全部转换。调用方可实现自定义 Encoder，并应先核对消息样本。
 
 源码在 Produce 后执行固定时长 Flush，但没有将每条消息的最终投递结果返回给调用方。目标接口明确结果边界；如增加同步发送，以新方法或选项表达，并由 ctx 约束等待，不能把排队成功解释为已经持久化。
 
@@ -252,24 +253,24 @@ HTTP 适配采用 `func(http.Handler) http.Handler` 形式；路径规则和错�
 
 `WaitTimeout=-1` 的长期等待不能阻止退出。内部采用可周期检查 ctx 的读取方式，重试等待使用可取消 timer；用户 handler 若不响应取消，不承诺强行终止其执行。
 
-## 兼容边界与待确认项
+## 兼容边界
 
 
 | 项目           | 已确定约束或后续确认内容                                                      |
 | ---------------- | ------------------------------------------------------------------------------- |
 | GoFrame 类型   | 目标包完全移除；依赖 GF 的返回值与回调用明确迁移映射替代。                    |
 | 配置字段       | 已存在字段的类型和单位保持，必要新模型使用新名称并提供适配。                  |
-| 客户端驱动     | 保留 go-redis/v9 与 confluent-kafka-go/v2 家族，实施时固定兼容版本。          |
-| 线上旧 token   | 是否要求滚动发布期间新旧 token 双向互认，需要确认；方案预留显式 LegacyCodec。 |
-| 旧缓存 key     | 是否要求复用旧 Redis key，需要确认；默认 Namespace 不能自动等同于旧前缀。     |
-| 文件会话       | 保留文件模式能力；是否导入旧 `.dat` 及其到期策略，需要确认。                  |
+| 客户端驱动     | 保留源使用的 go-redis/v9 v9.3.0 与 confluent-kafka-go/v2 v2.8.0；模拟测试使用 miniredis/v2 v2.31.0。 |
+| 线上旧 token   | 显式 LegacyCodec 保留字符串协议，密钥必须配置；不承诺自动复用旧会话。       |
+| 旧缓存 key     | 不自动导入旧 Redis key，默认 Namespace 与旧前缀必须由业务显式映射。         |
+| 文件会话       | 保留专用 FileStore；不自动导入旧 `.dat`，导入及到期策略属于独立范围。          |
 | Kafka 故障策略 | 默认失败不提交；跳过、死信、限次后人工处理属于显式业务策略。                  |
 
-这些确认点不改变五个模块均需迁移的范围。未完成协议与业务验证前，不宣称是只换 import 即可的无缝替换。
+这些边界不改变五个模块均已迁移的范围。未完成协议与业务环境验证前，不宣称是只换 import 即可的无缝替换。
 
 ## 落地顺序与验证
 
-1. 实施 extension/reflectx，迁移 plreflect 的标准库扩展能力并明确边界行为。
+1. 实施 extension/reflectx，迁移 plreflect 与 lib/libreflect 的标准库扩展能力并明确边界行为。
 2. 实施 tkredis，剔除 gvar、gerror、gfile，使用 reflectx 替代源 plreflect 依赖，保留客户端和原子操作能力。
 3. 实施 tkcache 的两种后端，补齐从 plcache 迁移的能力与 token 所需比较操作。
 4. 实施 tktoken 核心、会话存储、LegacyCodec 与独立 HTTP 适配。
@@ -280,4 +281,4 @@ HTTP 适配采用 `func(http.Handler) http.Handler` 形式；路径规则和错�
 
 验收至少覆盖 reflectx 的 nil、无效反射值和多级指针行为，缓存两种后端的等价行为、原子比较更新与删除、Redis 锁持有者校验、旧 token 编解码及会话 key 映射、文件会话到期、Kafka 多分区提交和失败不提交。设计中的验收要求不代表上述实现或测试已经完成。
 
-当前交付包含整体迁移设计、tkcache 设计及 reflectx 设计，尚未实施 Go 代码迁移。
+当前交付包含五个目标包、各包 README、离线模块测试与更新后的设计文档。未修改源仓库或业务服务；真实 Redis Cluster、Kafka 认证/重平衡/断线恢复和数据库事务补偿仍需业务环境验证。
