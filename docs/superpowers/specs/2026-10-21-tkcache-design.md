@@ -135,7 +135,7 @@ func GetOrLoadJSON[T any](ctx context.Context, cache *Cache, key string, ttl tim
 
 `GetJSON` 未命中时返回 `found=false`，不执行解码；命中但解码失败时返回 `found=true` 和解码错误。`GetOrLoadJSON` 遇到已有内容无法解码时直接返回错误，不自动删除内容或执行数据库回源。
 
-`LoadOption` 首版提供 `WithCacheEmpty(bool)`，用于迁移原 plcache 的 force 参数，默认缓存成功返回的空结果。关闭该选项时，nil 字节结果或 JSON nil 结果只返回、不回填；空字符串、0、false 和非 nil 的空切片仍是有效内容。JSON 层在编码前判断 typed nil，不把非空对象误判为空。回源方法的回调错误始终不缓存。
+`LoadOption` 首版提供 `WithCacheEmpty(bool)`，用于迁移原 plcache 的 force 参数，默认缓存成功返回的空结果。关闭该选项时，nil 字节结果或 JSON nil 结果只返回、不回填；空字符串、0、false 和非 nil 的空切片仍是有效内容。JSON 层在编码前使用 `extension/reflectx` 的 IsNil 判断 typed nil，不把非空对象误判为空。reflectx 迁移自源 plreflect，定位见 [reflectx 标准库扩展设计](./2026-10-21-reflectx-design.md)。回源方法的回调错误始终不缓存。
 
 ## plcache 能力迁移
 
