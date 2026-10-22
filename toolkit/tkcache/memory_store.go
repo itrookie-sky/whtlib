@@ -62,6 +62,10 @@ func copyValue(value []byte) (result []byte) {
 }
 
 func (m *memoryStore) put(key string, value []byte, ttl time.Duration) {
+	if ttl == 0 {
+		delete(m.entries, key)
+		return
+	}
 	item := entry{value: copyValue(value)}
 	if ttl > 0 {
 		item.expires = m.now().Add(ttl)
@@ -103,7 +107,7 @@ func (m *memoryStore) apply(ctx context.Context, key string, req request) (resul
 	case opGetSet:
 		if !found {
 			m.put(key, req.value, req.ttl)
-			item, _ = m.lookup(key)
+			item = entry{value: req.value}
 			result.changed = true
 		}
 		result.value = copyValue(item.value)
@@ -142,10 +146,13 @@ func (m *memoryStore) ttl(ctx context.Context, key string) (ttl time.Duration, f
 		return
 	}
 	item, found := m.lookup(key)
-	if found && !item.expires.IsZero() {
-		ttl = max(item.expires.Sub(m.now()), 0)
+	if !found {
+		return TTLNotFound, false, nil
 	}
-	return
+	if item.expires.IsZero() {
+		return NoExpiration, true, nil
+	}
+	return max(item.expires.Sub(m.now()), 0), true, nil
 }
 
 func (m *memoryStore) clear(ctx context.Context, prefix string) (err error) {

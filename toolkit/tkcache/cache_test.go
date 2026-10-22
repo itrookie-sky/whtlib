@@ -76,17 +76,17 @@ func TestBytesTTLAndAtomic(t *testing.T) {
 		ctx := t.Context()
 		wantValue(t, cache, "missing", "", false)
 		ttl, found, err := cache.TTL(ctx, "missing")
-		if err != nil || found || ttl != 0 {
+		if err != nil || found || ttl != TTLNotFound {
 			t.Fatalf("缺失 TTL: %v,%v,%v", ttl, found, err)
 		}
-		mustSet(t, cache, "empty", "", 0)
+		mustSet(t, cache, "empty", "", NoExpiration)
 		wantValue(t, cache, "empty", "", true)
 		ttl, found, err = cache.TTL(ctx, "empty")
-		if err != nil || !found || ttl != 0 {
+		if err != nil || !found || ttl != NoExpiration {
 			t.Fatalf("永久 TTL: %v,%v,%v", ttl, found, err)
 		}
 		input := []byte("original")
-		err = cache.Set(ctx, "copy", input, 0)
+		err = cache.Set(ctx, "copy", input, NoExpiration)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -105,15 +105,15 @@ func TestBytesTTLAndAtomic(t *testing.T) {
 		advance(60 * time.Millisecond)
 		wantValue(t, cache, "expire", "", false)
 		mustSet(t, cache, "expire", "persist", time.Second)
-		_, found, err = cache.GetAndExpire(ctx, "expire", 0)
+		_, found, err = cache.GetAndExpire(ctx, "expire", NoExpiration)
 		if err != nil || !found {
 			t.Fatalf("清除 TTL: %v", err)
 		}
 		ttl, found, err = cache.TTL(ctx, "expire")
-		if err != nil || !found || ttl != 0 {
+		if err != nil || !found || ttl != NoExpiration {
 			t.Fatalf("续期为永久: %v,%v,%v", ttl, found, err)
 		}
-		swapped, err := cache.CompareAndSwap(ctx, "expire", []byte("wrong"), []byte("new"), 0)
+		swapped, err := cache.CompareAndSwap(ctx, "expire", []byte("wrong"), []byte("new"), NoExpiration)
 		if err != nil || swapped {
 			t.Fatalf("错误旧值不应更新: %v", err)
 		}
@@ -130,7 +130,7 @@ func TestBytesTTLAndAtomic(t *testing.T) {
 			t.Fatalf("匹配删除失败: %v", err)
 		}
 		mustSet(t, cache, "hit", "existing", time.Second)
-		value, err := cache.GetOrSet(ctx, "hit", []byte("candidate"), 0)
+		value, err := cache.GetOrSet(ctx, "hit", []byte("candidate"), NoExpiration)
 		if err != nil || string(value) != "existing" {
 			t.Fatalf("GetOrSet 命中: %q,%v", value, err)
 		}
@@ -143,7 +143,7 @@ func TestBytesTTLAndAtomic(t *testing.T) {
 			t.Fatalf("读后删除: %q,%v,%v", value, found, err)
 		}
 		wantValue(t, cache, "hit", "", false)
-		err = cache.SetMap(ctx, map[string][]byte{"a": []byte("A"), "b": {}}, 0)
+		err = cache.SetMap(ctx, map[string][]byte{"a": []byte("A"), "b": {}}, NoExpiration)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -159,7 +159,7 @@ func TestJSONAndEmptyPolicy(t *testing.T) {
 		type user struct {
 			ID int64 `json:"id"`
 		}
-		err := cache.SetJSON(t.Context(), "user", &user{ID: 9007199254740993}, 0)
+		err := cache.SetJSON(t.Context(), "user", &user{ID: 9007199254740993}, NoExpiration)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -172,7 +172,7 @@ func TestJSONAndEmptyPolicy(t *testing.T) {
 			t.Fatalf("动态数字精度丢失: %v,%v", dynamic, err)
 		}
 		for _, bad := range []string{"broken", "{} {}"} {
-			mustSet(t, cache, "bad", bad, 0)
+			mustSet(t, cache, "bad", bad, NoExpiration)
 			_, found, err = GetJSON[user](t.Context(), cache, "bad")
 			if !found || err == nil {
 				t.Fatal("损坏 JSON 应保留命中标志并返回错误")
@@ -180,7 +180,7 @@ func TestJSONAndEmptyPolicy(t *testing.T) {
 		}
 		for _, keepEmpty := range []bool{true, false} {
 			key := fmt.Sprint("nil-", keepEmpty)
-			value, err = GetOrLoadJSON(t.Context(), cache, key, 0, func(context.Context) (value *user, err error) { return }, WithCacheEmpty(keepEmpty))
+			value, err = GetOrLoadJSON(t.Context(), cache, key, NoExpiration, func(context.Context) (value *user, err error) { return }, WithCacheEmpty(keepEmpty))
 			if err != nil || value != nil {
 				t.Fatalf("typed nil 回源失败: %v", err)
 			}
@@ -189,7 +189,7 @@ func TestJSONAndEmptyPolicy(t *testing.T) {
 				t.Fatalf("空值策略错误: found=%v,keep=%v,err=%v", found, keepEmpty, err)
 			}
 		}
-		err = cache.SetJSON(t.Context(), "user", make(chan int), 0)
+		err = cache.SetJSON(t.Context(), "user", make(chan int), NoExpiration)
 		if err == nil {
 			t.Fatal("不可编码值应报错")
 		}
@@ -206,7 +206,7 @@ func TestAtomicContendersAndNamespace(t *testing.T) {
 		var workers sync.WaitGroup
 		for range 24 {
 			workers.Go(func() {
-				ok, err := cache.SetIfAbsent(t.Context(), "race", []byte("win"), 0)
+				ok, err := cache.SetIfAbsent(t.Context(), "race", []byte("win"), NoExpiration)
 				if err != nil {
 					t.Error(err)
 				}
@@ -241,8 +241,8 @@ func TestAtomicContendersAndNamespace(t *testing.T) {
 	first := newTestCache(t, RedisStore, "one", server)
 	shared := newTestCache(t, RedisStore, "one", server)
 	other := newTestCache(t, RedisStore, "two", server)
-	mustSet(t, first, "key", "shared", 0)
-	mustSet(t, other, "key", "other", 0)
+	mustSet(t, first, "key", "shared", NoExpiration)
+	mustSet(t, other, "key", "other", NoExpiration)
 	wantValue(t, shared, "key", "shared", true)
 	err := first.Clear(t.Context())
 	if err != nil {
@@ -254,14 +254,14 @@ func TestAtomicContendersAndNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	raw := first.store.(*redisStore).client
-	err = raw.Ping(t.Context()).Err()
+	client := first.store.(*redisStore).client
+	_, err = client.Do(t.Context(), "PING")
 	if err != nil {
 		t.Fatalf("关闭缓存不能关闭借用客户端: %v", err)
 	}
 	memory := newTestCache(t, MemoryStore, "same", nil)
 	separate := newTestCache(t, MemoryStore, "same", nil)
-	mustSet(t, memory, "key", "private", 0)
+	mustSet(t, memory, "key", "private", NoExpiration)
 	wantValue(t, separate, "key", "", false)
 }
 
@@ -279,7 +279,7 @@ func TestInvalidArgumentsAndLifecycle(t *testing.T) {
 		}
 	}
 	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
-		err := cache.Set(t.Context(), "key", nil, -1)
+		err := cache.Set(t.Context(), "key", nil, TTLNotFound)
 		if !errors.Is(err, ErrInvalidArgument) {
 			t.Fatal(err)
 		}
@@ -289,7 +289,7 @@ func TestInvalidArgumentsAndLifecycle(t *testing.T) {
 		}
 		ctx, cancel := context.WithCancel(t.Context())
 		cancel()
-		err = cache.Set(ctx, "key", nil, 0)
+		err = cache.Set(ctx, "key", nil, NoExpiration)
 		if !errors.Is(err, context.Canceled) {
 			t.Fatal(err)
 		}

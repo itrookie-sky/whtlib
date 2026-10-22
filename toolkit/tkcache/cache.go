@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"math"
 	"regexp"
 	"sync"
 	"time"
@@ -22,6 +21,13 @@ const (
 	MemoryStore StoreType = "memory"
 	RedisStore  StoreType = "redis"
 	FileStore   StoreType = "file"
+)
+
+const (
+	// NoExpiration 表示永久保存，写入和 TTL 查询均使用该原始哨兵值。
+	NoExpiration time.Duration = tkredis.NoExpiration
+	// TTLNotFound 表示键不存在，仅用于 TTL 查询结果，不能用于写入。
+	TTLNotFound time.Duration = tkredis.TTLNotFound
 )
 
 var (
@@ -122,7 +128,7 @@ func New(config Config) (cache *Cache, err error) {
 		if config.RedisClient == nil || config.RedisClient.Raw() == nil {
 			return nil, ErrInvalidConfig
 		}
-		cache.store = &redisStore{client: config.RedisClient.Raw()}
+		cache.store = &redisStore{client: config.RedisClient}
 	case FileStore:
 		cache.store, err = newFileStore(config.FilePath)
 		if err != nil {
@@ -135,20 +141,11 @@ func New(config Config) (cache *Cache, err error) {
 }
 
 func normalizeTTL(ttl time.Duration) (result time.Duration, err error) {
-	if ttl < 0 {
+	result, err = tkredis.NormalizeTTL(ttl)
+	if err != nil {
 		return 0, ErrInvalidArgument
 	}
-	if ttl == 0 {
-		return
-	}
-	milliseconds := int64(ttl / time.Millisecond)
-	if ttl%time.Millisecond != 0 {
-		milliseconds++
-	}
-	if milliseconds > math.MaxInt64/int64(time.Millisecond) {
-		return 0, ErrInvalidArgument
-	}
-	return time.Duration(milliseconds) * time.Millisecond, nil
+	return
 }
 
 func (c *Cache) check(ctx context.Context) (err error) {
@@ -223,7 +220,7 @@ func (c *Cache) mutatePhysical(ctx context.Context, key, physical string, req re
 	return
 }
 
-// Set 覆盖数据并重新计算 TTL，0 表示不设置到期时间。
+// Set 覆盖数据并重新计算 TTL；NoExpiration 永久保存，0 立即过期并删除旧值。
 func (c *Cache) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
 	_, err = c.mutate(ctx, key, request{operation: opSet, value: bytes.Clone(value), ttl: ttl})
 	return
@@ -235,7 +232,7 @@ func (c *Cache) SetIfAbsent(ctx context.Context, key string, value []byte, ttl t
 	return result.changed, err
 }
 
-// GetAndExpire 原子读取并重设 TTL，0 表示移除到期时间。
+// GetAndExpire 原子读取并重设 TTL；NoExpiration 移除到期时间，0 读取后删除。
 func (c *Cache) GetAndExpire(ctx context.Context, key string, ttl time.Duration) (value []byte, found bool, err error) {
 	result, err := c.mutate(ctx, key, request{operation: opGetExpire, ttl: ttl})
 	return result.value, result.found, err
@@ -274,7 +271,8 @@ func (c *Cache) Once(ctx context.Context, key string, ttl time.Duration) (acquir
 	return result.changed, err
 }
 
-// TTL 返回剩余 TTL；永久数据返回 0、true，未命中返回 0、false。
+// TTL 返回剩余 TTL；永久返回 NoExpiration、true，未命中返回 TTLNotFound、false。
+// 哨兵为原始 -1、-2，不随正数期限的时间单位缩放。
 func (c *Cache) TTL(ctx context.Context, key string) (ttl time.Duration, found bool, err error) {
 	physical, err := c.dataKey(key)
 	if err != nil {

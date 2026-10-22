@@ -78,11 +78,19 @@ func (c *Client) EvalSha(ctx context.Context, name string, keys []string, args .
 		err = fmt.Errorf("%w: %s", ErrScriptNotFound, name)
 		return
 	}
+	return c.runScript(ctx, redis.NewScript(script), keys, args...)
+}
+
+func (c *Client) runScript(ctx context.Context, script *redis.Script, keys []string, args ...any) (value any, err error) {
+	err = c.checkOpen()
+	if err != nil {
+		return
+	}
 	converted, err := explicitArgs(args)
 	if err != nil {
 		return
 	}
-	value, err = redis.NewScript(script).Run(nonNilContext(ctx), c.native, keys, converted...).Result()
+	value, err = script.Run(nonNilContext(ctx), c.native, keys, converted...).Result()
 	return
 }
 
@@ -180,11 +188,7 @@ func positiveMilliseconds(ttl time.Duration) (milliseconds int64, err error) {
 		err = errors.New("tkredis: expiration must be positive")
 		return
 	}
-	milliseconds = int64(ttl / time.Millisecond)
-	if ttl%time.Millisecond != 0 {
-		milliseconds++
-	}
-	return
+	return ttlMilliseconds(ttl)
 }
 
 func integerResult(value any) (result int, err error) {

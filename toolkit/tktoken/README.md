@@ -120,6 +120,8 @@ manager, err := buildToken(cache)
 
 该示例需导入 `github.com/itrookie-sky/whtlib/toolkit/tkcache`；父目录必须存在，一个快照只允许一个活动缓存实例持有。原 `NewFileStore` 入口已移除，已有文件的 key 映射和持久化语义见 tkcache 文档。会话始终使用正 TTL。
 
+`Store` 的写入 TTL 约定为原始 `-1` 永久、`0` 立即过期、正数为保存期限，小于 `-1` 的写入参数无效。使用 tkcache 时建议传 `tkcache.NoExpiration` 表达永久；`Cache.TTL` 查询使用原始 `-1` 表示永久、`-2` 表示不存在，保留 `found` 返回值。哨兵不乘以秒或毫秒。此约定调整 Store 的期限语义，`Config.Timeout` 仍要求有效的正毫秒值，传 `0` 仍采用默认会话超时，不会生成永久会话。
+
 ## 离线验证
 
 ```sh

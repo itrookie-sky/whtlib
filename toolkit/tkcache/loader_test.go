@@ -78,7 +78,7 @@ func TestSingleFlightAndCopies(t *testing.T) {
 				return nil, ctx.Err()
 			}
 			// 回源期间允许操作另一个 key，避免回调执行时持有数据锁。
-			err = cache.SetString(ctx, "other", "available", 0)
+			err = cache.SetString(ctx, "other", "available", NoExpiration)
 			return []byte("shared"), err
 		}
 		leader := startLoad(cache, t.Context(), "key", loader)
@@ -180,7 +180,7 @@ func TestMutationsPreventStaleWriteback(t *testing.T) {
 				var err error
 				switch mutation {
 				case "set":
-					err = cache.SetString(t.Context(), "key", "new", 0)
+					err = cache.SetString(t.Context(), "key", "new", NoExpiration)
 				case "delete":
 					err = cache.Delete(t.Context(), "key")
 				case "clear":
@@ -210,11 +210,11 @@ func TestMutationsPreventStaleWriteback(t *testing.T) {
 func TestLoaderErrorsAndClose(t *testing.T) {
 	eachStore(t, func(t *testing.T, cache *Cache, _ func(time.Duration)) {
 		problem := errors.New("database failed")
-		_, err := cache.GetOrLoad(t.Context(), "error", 0, func(context.Context) (value []byte, err error) { return nil, problem })
+		_, err := cache.GetOrLoad(t.Context(), "error", NoExpiration, func(context.Context) (value []byte, err error) { return nil, problem })
 		if !errors.Is(err, problem) {
 			t.Fatal(err)
 		}
-		_, err = cache.GetOrLoad(t.Context(), "panic", 0, func(context.Context) (value []byte, err error) { panic("bad loader") })
+		_, err = cache.GetOrLoad(t.Context(), "panic", NoExpiration, func(context.Context) (value []byte, err error) { panic("bad loader") })
 		if !errors.Is(err, ErrLoaderPanic) {
 			t.Fatalf("回源 panic 应唤醒等待者: %v", err)
 		}
@@ -250,7 +250,7 @@ func TestJSONWaiterUsesInitiatorEmptyPolicy(t *testing.T) {
 		started, release := make(chan struct{}), make(chan struct{})
 		leader := make(chan error, 1)
 		go func() {
-			_, err := GetOrLoadJSON(t.Context(), cache, "empty-policy", 0, func(context.Context) (value *int, err error) {
+			_, err := GetOrLoadJSON(t.Context(), cache, "empty-policy", NoExpiration, func(context.Context) (value *int, err error) {
 				close(started)
 				<-release
 				return
@@ -261,7 +261,7 @@ func TestJSONWaiterUsesInitiatorEmptyPolicy(t *testing.T) {
 		ctx := &observedContext{Context: t.Context(), waiting: make(chan struct{})}
 		follower := make(chan error, 1)
 		go func() {
-			value, err := GetOrLoadJSON(ctx, cache, "empty-policy", 0, func(context.Context) (value *int, err error) {
+			value, err := GetOrLoadJSON(ctx, cache, "empty-policy", NoExpiration, func(context.Context) (value *int, err error) {
 				return nil, errors.New("不应另行回源")
 			}, WithCacheEmpty(true))
 			if value != nil {
@@ -292,12 +292,12 @@ func TestStoreFailureDoesNotLoad(t *testing.T) {
 			return
 		}
 		key, _ := cache.dataKey("wrongtype")
-		err := storeImpl.client.LPush(t.Context(), key, "list").Err()
+		_, err := storeImpl.client.Do(t.Context(), "LPUSH", key, "list")
 		if err != nil {
 			t.Fatal(err)
 		}
 		called := false
-		_, err = cache.GetOrLoad(t.Context(), "wrongtype", 0, func(context.Context) (value []byte, err error) {
+		_, err = cache.GetOrLoad(t.Context(), "wrongtype", NoExpiration, func(context.Context) (value []byte, err error) {
 			called = true
 			return []byte("fallback"), nil
 		})

@@ -50,6 +50,10 @@ func (s *memoryStore) Get(ctx context.Context, key string) (value []byte, found 
 }
 
 func (s *memoryStore) put(key string, value []byte, ttl time.Duration) {
+	if ttl == 0 {
+		delete(s.entries, key)
+		return
+	}
 	entry := memoryEntry{value: bytes.Clone(value)}
 	if ttl > 0 {
 		entry.expires = s.now().Add(ttl)
@@ -58,6 +62,10 @@ func (s *memoryStore) put(key string, value []byte, ttl time.Duration) {
 }
 
 func (s *memoryStore) Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error) {
+	if ttl < -1 {
+		err = errors.New("test store: invalid ttl")
+		return
+	}
 	err = ctx.Err()
 	if err != nil {
 		return
@@ -69,6 +77,10 @@ func (s *memoryStore) Set(ctx context.Context, key string, value []byte, ttl tim
 }
 
 func (s *memoryStore) SetIfAbsent(ctx context.Context, key string, value []byte, ttl time.Duration) (stored bool, err error) {
+	if ttl < -1 {
+		err = errors.New("test store: invalid ttl")
+		return
+	}
 	err = ctx.Err()
 	if err != nil {
 		return
@@ -85,6 +97,10 @@ func (s *memoryStore) SetIfAbsent(ctx context.Context, key string, value []byte,
 }
 
 func (s *memoryStore) CompareAndSwap(ctx context.Context, key string, expected, value []byte, ttl time.Duration) (swapped bool, err error) {
+	if ttl < -1 {
+		err = errors.New("test store: invalid ttl")
+		return
+	}
 	err = ctx.Err()
 	if err != nil {
 		return

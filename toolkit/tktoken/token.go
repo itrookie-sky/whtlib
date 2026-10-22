@@ -39,7 +39,8 @@ var (
 // Store 是会话消费方所需的最小存储接口；比较操作必须由 Store 原子执行。
 //
 // 读取、写入的字节不得由调用方与存储共享可变底层数组。
-// ttl 为零表示永久保存，负值无效；不存在的键不能通过比较操作创建。
+// ttl 为原始 -1 表示永久保存，0 表示立即过期，正数表示保存期限，小于 -1 无效。
+// 永久哨兵不乘以秒或毫秒；不存在的键不能通过比较操作创建。
 type Store interface {
 	Get(ctx context.Context, key string) (value []byte, found bool, err error)
 	Set(ctx context.Context, key string, value []byte, ttl time.Duration) (err error)

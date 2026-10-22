@@ -24,7 +24,7 @@ if errors.Is(err, redis.Nil) {
 
 `New` 复制 `redis.Options` 配置值，创建并拥有连接池；构造过程不连接服务器、不预加载脚本，首次命令返回连接错误。`New(nil)` 使用 go-redis 默认配置。`NewWithOption` 提供配置函数入口。
 
-`Wrap(redis.UniversalClient)` 借用已有单机、Sentinel 或 Cluster 客户端；`Raw()` 供缓存等模块复用连接池。`Close()` 幂等，取消并等待锁维护任务后只关闭自有连接池。借用池仍由调用方管理。通过 `SetLogger(adapter.Logger)` 可选注入日志；内部诊断不会记录认证配置、锁 key、owner 或完整参数。
+`Wrap(redis.UniversalClient)` 借用已有单机、Sentinel 或 Cluster 客户端；`Raw()` 提供原生客户端访问。tkcache 通过本包公开方法复用能力，不绕过客户端状态检查。`Close()` 幂等，取消并等待锁维护任务后只关闭自有连接池。借用池仍由调用方管理。通过 `SetLogger(adapter.Logger)` 可选注入日志；内部诊断不会记录认证配置、锁 key、owner 或完整参数。
 
 ## 命令和编码
 
@@ -43,6 +43,20 @@ if errors.Is(err, redis.Nil) {
 - `Polling`：返回 `[0, maximum)` 范围内的循环下标，`maximum` 必须为正。
 
 小于一毫秒的正 TTL 向上取整为一毫秒，避免提前失效。
+
+## 字符串和 TTL
+
+`Get`、`Set` 提供原始 `[]byte` 入口；`SetIfAbsent`、`GetOrSet`、`GetAndExpire`、`GetAndDelete`、`CompareAndSwap` 提供通用原子操作，比较删除继续使用已有 `Cad`。这些方法统一通过本包的命令执行器和脚本执行器，脚本遇到 `NOSCRIPT` 自动重载。空内容与不存在通过 `found` 区分，错误原样返回，不将类型错误当作未命中。
+
+字符串写入的 TTL 为 `time.Duration`：`NoExpiration`（原始 `-1`）永久，`0` 立即过期，正数设置期限并向上取整到毫秒；其他负数报 `ErrInvalidTTL`。`NormalizeTTL` 可供其他组件复用该参数校验与精度约定。
+
+`PTTL` 返回毫秒精度的 Duration，原始 `-1` 表示永久、`TTLNotFound`（原始 `-2`）表示不存在，负数哨兵不乘以毫秒。正数传参仍使用 `time.Second`、`time.Minute` 等标准 Duration。
+
+`GetOrSet` 命中不续期，`stored` 表示写入条件是否满足；未命中且 TTL 为 0 时返回候选值和 `stored=true`，不留下键。`GetAndExpire` 使用 `NoExpiration` 移除到期时间，使用 0 返回旧值后删除；CAS 和条件写入未匹配时保持已有键不变。
+
+`DeletePrefix` 按字面量前缀执行 SCAN 与删除，空前缀报错，Cluster 遍历各主节点。它不承诺并发写入时的事务快照，也不关闭客户端。
+
+上述 TTL 约定适用于本节新增字符串接口及 tkcache。`Do` 仍传递原生命令参数；下文集合可选 TTL 的“省略/0 保持原 TTL”以及锁、冷却标记必须使用正期限的约定保留。
 
 ## 集合
 

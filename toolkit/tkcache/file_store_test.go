@@ -231,7 +231,7 @@ func TestFileStoreNamespaceAndClearSurviveRestart(t *testing.T) {
 		return
 	}
 	first := open("first")
-	mustSet(t, first, "key", "first", 0)
+	mustSet(t, first, "key", "first", NoExpiration)
 	ok, err := first.Once(t.Context(), "key", time.Hour)
 	if err != nil || !ok {
 		t.Fatal("占位失败", err)
@@ -239,7 +239,7 @@ func TestFileStoreNamespaceAndClearSurviveRestart(t *testing.T) {
 	_ = first.Close()
 	second := open("second")
 	wantValue(t, second, "key", "", false)
-	mustSet(t, second, "key", "second", 0)
+	mustSet(t, second, "key", "second", NoExpiration)
 	_ = second.Close()
 	first = open("first")
 	wantValue(t, first, "key", "first", true)

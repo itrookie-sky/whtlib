@@ -22,7 +22,7 @@ text, found, err := cache.GetString(ctx, "notice")
 user, err := tkcache.GetOrLoadJSON[*User](ctx, cache, "user:123", 5*time.Minute, loadUser)
 ```
 
-Redis 模式先用 `tkredis.New(*redis.Options)` 或 `tkredis.Wrap(redis.UniversalClient)` 获得客户端，再传入 `Config{Store: tkcache.RedisStore, Namespace: "orders", RedisClient: client}`。缓存始终借用连接池；关闭缓存不关闭客户端、不删除 Redis 数据。连接超时、认证和 Cluster/Sentinel 参数由原生客户端配置。
+Redis 模式先用 `tkredis.New(*redis.Options)` 或 `tkredis.Wrap(redis.UniversalClient)` 获得客户端，再传入 `Config{Store: tkcache.RedisStore, Namespace: "orders", RedisClient: client}`。Redis Store 只做接口适配，读写、TTL、原子操作、前缀清理和客户端状态检查均复用 `tkredis.Client`，不直接操作 go-redis 或维护 Lua。缓存始终借用客户端；关闭缓存不关闭客户端、不删除 Redis 数据。连接超时、认证和 Cluster/Sentinel 参数由原生客户端配置。
 
 ## 文件 Store
 
@@ -58,12 +58,25 @@ defer cache.Close()
 | `GetOrSet` | 原子返回已有内容或写入候选值，命中不续期。 |
 | `GetAndExpire`、`GetAndDelete` | 原子读后续期或删除。 |
 | `CompareAndSwap`、`CompareAndDelete` | 比较原始字节，匹配后才更新/删除；缺失不能匹配成功。 |
-| `TTL`、`Exists`、`Delete` | TTL 为 0、true 表示永久，为 0、false 表示不存在。 |
+| `TTL`、`Exists`、`Delete` | TTL 为 -1、true 表示永久，为 -2、false 表示不存在。 |
 | `GetMap`、`SetMap` | 批量操作；缺失项不进入读取结果，跨 key 无事务，可能部分完成。 |
 | `Once` | 独立区域的正 TTL 原子占位，不承诺业务 exactly-once。 |
 | `Clear`、`Close` | 清当前命名空间；关闭幂等，停止维护、取消回源并唤醒等待者。 |
 
-TTL 为 `time.Duration`：0 永久，负数报错，正数向上取整到毫秒。相同 key 的读写必须约定相同编码；nil 与零长度字节统一按空内容存储，不保留区别。写入和读取的切片均隔离，不共享可变底层数组。
+TTL 保持 `time.Duration` 类型，三种 Store 使用相同约定：
+
+| 值 | 写入含义 | `TTL` 查询含义 |
+| --- | --- | --- |
+| `tkcache.NoExpiration`（原始 `-1`） | 永久保存或移除已有到期时间 | 键存在且永久，`found=true` |
+| `0` | 立即过期，删除符合操作条件的键 | 剩余期限为零，不能用于判断永久或不存在 |
+| 正数 | 保存期限，向上取整到毫秒 | 剩余有效期 |
+| `tkcache.TTLNotFound`（原始 `-2`） | 无效参数 | 键不存在，`found=false` |
+
+其他小于 `-1` 的写入参数返回 `ErrInvalidArgument`。哨兵直接使用常量或 `time.Duration(-1/-2)`，不要乘以 `time.Second` 或 `time.Millisecond`；正数期限仍按正常 Duration 使用。TTL 查询的 `found` 和错误返回值保留不变。
+
+`0` 不再表示永久，原先用于永久保存的调用需要改为 `tkcache.NoExpiration`。`GetAndExpire(key, 0)` 返回旧内容后删除；`GetOrSet` 未命中且 TTL 为 0 时返回候选值但不留下缓存；`GetOrLoad` 的零 TTL 同样只返回回源结果、不保留缓存。条件写入或 CAS 未匹配时不会因为 TTL 为 0 而删除已有值。`Once` 仍要求正期限。
+
+相同 key 的读写必须约定相同编码；nil 与零长度字节统一按空内容存储，不保留区别。写入和读取的切片均隔离，不共享可变底层数组。文件快照格式不变，已有零到期时间的永久记录仍按永久处理。
 
 `WithCacheEmpty(false)` 使 nil 回源结果只返回、不回填；JSON typed nil 也按此处理。默认缓存成功的空结果，包括 JSON null。空字符串、0、false 和非 nil 空集合始终是有效数据。回源错误、JSON 错误和Store 故障都原样返回，不自动降级查询数据库。
 
