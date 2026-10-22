@@ -12,6 +12,7 @@ whtlib/
 │   ├── tkaes/    # AES 加解密与编码工具
 │   ├── tkcache/  # 内存、Redis 与文件字节缓存、文本/JSON、回源合并
 │   ├── tkredis/  # Redis 命令、Lua、集合及租约锁
+│   ├── tksign/   # 多格式公私钥解析、RSA/ECDSA/Ed25519 签名验签
 │   ├── tktoken/  # 会话、旧 token 协议、标准 HTTP 中间件
 │   └── tkkafka/  # Kafka 投递、消费、重试及分区提交
 ├── extension/    # Go 标准库功能扩展
@@ -42,6 +43,10 @@ whtlib/
 组件可选注入现有非泛型 `adapter.Logger`，包含 `Skip(n) Logger`、Debug/Info/Warn/Error 及四个格式化方法。普通参数按空格拼接正文；接口不包含 Log、SetConfig 或 Close。adapter 仅依赖标准库，日志配置与生命周期由调用方管理。
 
 接入具体日志库时需满足完整方法签名。当前 `logx.Logger.Skip` 返回 `*logx.Logger`，需要调用方提供包装器转换为 `adapter.Logger` 的返回类型；Go 接口不支持返回类型协变。
+
+## 签名验签
+
+[tksign 使用说明](toolkit/tksign/README.md)：通过 `WithPrivateKey`、`WithPublicKey` 按需配置密钥，支持 PEM、Base64 和 DER，统一提供 RSA、RSA-PSS、ECDSA 和 Ed25519 签名验签。字符串入口默认使用 Base64，也可配置 Base64URL 或 Hex；仅传私钥时自动导出验签公钥。
 
 ## 迁移组件
 
