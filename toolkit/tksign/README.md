@@ -57,14 +57,15 @@ verifier, err := tksign.New(tksign.WithPublicKeyDER(publicDER))
 
 ## 支持的格式
 
-| 内容 | 支持的封装 |
-| --- | --- |
-| RSA 私钥 | PKCS#1、未加密 PKCS#8 |
-| ECDSA 私钥 | SEC1、未加密 PKCS#8 |
-| Ed25519 私钥 | 未加密 PKCS#8 |
-| RSA 公钥 | PKCS#1、PKIX/SPKI |
-| ECDSA / Ed25519 公钥 | PKIX/SPKI |
-| X.509 证书 | 提取 RSA、ECDSA、Ed25519 公钥 |
+
+| 内容                 | 支持的封装                    |
+| ---------------------- | ------------------------------- |
+| RSA 私钥             | PKCS#1、未加密 PKCS#8         |
+| ECDSA 私钥           | SEC1、未加密 PKCS#8           |
+| Ed25519 私钥         | 未加密 PKCS#8                 |
+| RSA 公钥             | PKCS#1、PKIX/SPKI             |
+| ECDSA / Ed25519 公钥 | PKIX/SPKI                     |
+| X.509 证书           | 提取 RSA、ECDSA、Ed25519 公钥 |
 
 PEM 标签支持 `RSA PRIVATE KEY`、`PRIVATE KEY`、`EC PRIVATE KEY`、`RSA PUBLIC KEY`、`PUBLIC KEY` 和 `CERTIFICATE`，公私钥选项须使用对应类型。
 
@@ -74,13 +75,14 @@ PEM 标签支持 `RSA PRIVATE KEY`、`PRIVATE KEY`、`EC PRIVATE KEY`、`RSA PUB
 
 ## 算法与摘要
 
-| 密钥 | 默认签名方式 |
-| --- | --- |
-| RSA | PKCS#1 v1.5 + SHA-256 |
+
+| 密钥        | 默认签名方式            |
+| ------------- | ------------------------- |
+| RSA         | PKCS#1 v1.5 + SHA-256   |
 | ECDSA P-256 | SHA-256，ASN.1 DER 签名 |
 | ECDSA P-384 | SHA-384，ASN.1 DER 签名 |
 | ECDSA P-521 | SHA-512，ASN.1 DER 签名 |
-| Ed25519 | 对原始消息签名 |
+| Ed25519     | 对原始消息签名          |
 
 RSA 接受至少 1024 位的密钥，遵守标准库的最低长度限制；ECDSA 支持上表的三种曲线。
 
@@ -112,11 +114,12 @@ err = verifier.VerifyString("待签名数据", encoded)
 
 `WithEncoding` 只影响字符串方法：
 
-| 选项值 | 编码 |
-| --- | --- |
-| `EncodingBase64` | 标准 Base64，有填充 |
+
+| 选项值              | 编码                    |
+| --------------------- | ------------------------- |
+| `EncodingBase64`    | 标准 Base64，有填充     |
 | `EncodingBase64URL` | URL 安全 Base64，无填充 |
-| `EncodingHex` | 十六进制，输出小写 |
+| `EncodingHex`       | 十六进制，输出小写      |
 
 双方应使用相同编码。验签严格按已配置编码解码，不自动尝试其他编码。
 
@@ -126,13 +129,14 @@ err = verifier.VerifyString("待签名数据", encoded)
 
 使用 `errors.Is` 判断错误：
 
-| 错误 | 含义 |
-| --- | --- |
-| `ErrInvalidKey` | 未提供密钥、格式错误、不支持的类型或无效密钥 |
-| `ErrMissingPrivateKey` | 公钥实例或未初始化实例尝试签名 |
-| `ErrMissingPublicKey` | 未初始化实例尝试验签 |
-| `ErrUnsupportedOption` | 编码、摘要或 PSS 配置不适用于密钥 |
-| `ErrVerification` | 签名解码失败、签名畸形或消息/公钥不匹配 |
+
+| 错误                   | 含义                                         |
+| ------------------------ | ---------------------------------------------- |
+| `ErrInvalidKey`        | 未提供密钥、格式错误、不支持的类型或无效密钥 |
+| `ErrMissingPrivateKey` | 公钥实例或未初始化实例尝试签名               |
+| `ErrMissingPublicKey`  | 未初始化实例尝试验签                         |
+| `ErrUnsupportedOption` | 编码、摘要或 PSS 配置不适用于密钥            |
+| `ErrVerification`      | 签名解码失败、签名畸形或消息/公钥不匹配      |
 
 nil 实例和零值实例的方法返回缺少密钥错误。错误不包含传入的密钥、消息或签名内容。
 
