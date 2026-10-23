@@ -96,14 +96,17 @@ CloseIdleConnections 仅作用于自建池，借用池时为空操作，不取�
 `adapter.LogAcc` 是共享契约，`tkhttp` 不导入具体日志实现。`logx.NewLogAccAdapter(opts...)` 可创建适配实例，也可注入其他满足契约的实现。接口和具体 LogAcc 都不提供 Clone，每次调用由工厂创建新实例。
 
 ```go
+// backend 为 adapter.Logger，可使用 GoFrame 适配器，或 logx.NewLoggerAdapter(logger)。
 var factory tkhttp.LogAccFactory = func() (acc adapter.LogAcc) {
-    acc = logx.NewLogAccAdapter(logx.WithLogger(logger), logx.WithCost(time.Now()))
+    acc = logx.NewLogAccAdapter(logx.WithLogger(backend), logx.WithCost(time.Now()))
     return acc.SetValue("component", "deviceAPI")
 }
 // 初始化时通过 tkhttp.WithLogAcc(factory) 注入。
 ```
 
 `LogAccFactory` 的签名为 `func() (acc adapter.LogAcc)`，仅供 tkhttp 使用，声明在本包中。New 校验工厂非 nil，不调用工厂；每次 HTTP 调用执行一次工厂，再通过 SetStartTime 设置本次入口时间。工厂必须支持并发调用，并返回字段、起点和 Skip 均独立的新累加器，可以共享日志后端。
+
+`logx.WithLogger` 接收共享的 `adapter.Logger`，无需绑定 logx Logger。完整 GoFrame 后端与 HTTP 工厂示例见 [GoFrame 接入](../../examples/logacc_goframe/README.md)。
 
 每次调用独立累计 `http` 元数据和 `biz` 业务字段，在统一出口只调用一次 Info/Warn/Error。成功用 Info，3xx/4xx 和主动取消用 Warn，其他失败用 Error；参数错误同样记录，初始化错误由调用方处理。
 

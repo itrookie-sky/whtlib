@@ -6,7 +6,7 @@ import (
 	"context"
 )
 
-// Logger 定义与 logx 一致的日志打印接口。
+// Logger 定义多个组件共享的日志打印与调用位置契约。
 //
 // 打印方法必须传入非 nil 的 ctx，且不返回错误。
 // 普通方法将 message 与 args 按空格拼接为正文，不将 args 解析为键值对；
@@ -14,7 +14,7 @@ import (
 // 带 f 的方法遵循 fmt.Sprintf 格式化语义。
 // 实现应支持并发打印；配置与关闭由实例创建方管理。
 type Logger interface {
-	// Skip 文件回溯
+	// Skip 返回额外跳过 n 层调用的借用视图，不修改原实例或接管后端资源。
 	Skip(n int) Logger
 	// Debug 输出调试日志。
 	Debug(ctx context.Context, message string, args ...any)

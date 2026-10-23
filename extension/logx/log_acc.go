@@ -5,9 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"maps"
+	"os"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"time"
+
+	"github.com/itrookie-sky/whtlib/adapter"
 )
 
 // LogAcc 并发安全地累积日志字段，使用后不能按值复制。
@@ -15,7 +19,7 @@ import (
 type LogAcc struct {
 	mu     sync.RWMutex
 	fields map[string]any
-	logger *Logger
+	logger adapter.Logger
 	start  time.Time
 	skip   int
 }
@@ -23,7 +27,7 @@ type LogAcc struct {
 // LogAccOptionFunc 配置日志累积器，仅在构造期间使用。
 type LogAccOptionFunc func(acc *LogAcc)
 
-// NewLogAcc 创建日志累积器，默认使用全局 Logger。
+// NewLogAcc 创建日志累积器，默认通过适配器使用全局 Logger。
 func NewLogAcc(ops ...LogAccOptionFunc) (acc *LogAcc) {
 	acc = &LogAcc{fields: make(map[string]any)}
 	for _, op := range ops {
@@ -34,8 +38,9 @@ func NewLogAcc(ops ...LogAccOptionFunc) (acc *LogAcc) {
 	return
 }
 
-// WithLogger 指定日志实例，nil 表示使用全局 Logger；不接管实例生命周期。
-func WithLogger(logger *Logger) (op LogAccOptionFunc) {
+// WithLogger 注入日志后端，支持任意 adapter.Logger 实现。
+// nil 或 typed nil 使用全局 Logger 的适配器；不接管实例生命周期。
+func WithLogger(logger adapter.Logger) (op LogAccOptionFunc) {
 	return func(acc *LogAcc) { acc.logger = logger }
 }
 
@@ -86,7 +91,7 @@ func (a *LogAcc) Skip(n int) (acc *LogAcc) {
 }
 
 // snapshot 先校验完整键值对，再一次性更新并复制字段，避免部分写入。
-func (a *LogAcc) snapshot(args []any) (fields map[string]any, logger *Logger, start time.Time, skip int) {
+func (a *LogAcc) snapshot(args []any) (fields map[string]any, logger adapter.Logger, start time.Time, skip int) {
 	if len(args)%2 != 0 {
 		panic("logx: LogAcc requires key/value pairs")
 	}
@@ -111,25 +116,61 @@ func (a *LogAcc) output(ctx context.Context, level slog.Level, message string, a
 		panic("logx: nil context")
 	}
 	fields, logger, start, skip := a.snapshot(args)
-	if logger == nil {
-		logger = Default()
+	if isNil(logger) {
+		logger = NewLoggerAdapter(nil)
 	}
-	keys := slices.Sorted(maps.Keys(fields))
-	attrs := make([]any, 0, len(keys)*2)
-	for _, key := range keys {
-		attrs = append(attrs, key, fields[key])
-	}
-	if !start.IsZero() {
-		message = fmt.Sprintf("[%s] %s", time.Since(start), message)
-	}
-	// 临时调用视图仅调整栈深度，不派生文件引用，也不关闭借用的 Logger。
+	// 公开累加器方法和本方法各占一层，后端适配器补偿其自身封装。
 	maxSkip := int(^uint(0) >> 1)
 	totalSkip := maxSkip
-	if skip < maxSkip && logger.skip <= maxSkip-skip-1 {
-		totalSkip = logger.skip + skip + 1
+	if skip <= maxSkip-2 {
+		totalSkip = skip + 2
 	}
-	view := Logger{core: logger.core, skip: totalSkip}
-	view.output(ctx, level, message, attrs, outputStructured)
+	view := logger.Skip(totalSkip)
+	if isNil(view) {
+		panic("logx: Logger.Skip returned nil")
+	}
+	// 惰性编码保留后端级别过滤能力，不向普通日志接口传入结构化键值对。
+	data := &logAccMessage{message: message, fields: fields, start: start}
+	switch level {
+	case slog.LevelDebug:
+		view.Debug(ctx, "", data)
+	case slog.LevelWarn:
+		view.Warn(ctx, "", data)
+	case slog.LevelError:
+		view.Error(ctx, "", data)
+	default:
+		view.Info(ctx, "", data)
+	}
+}
+
+// logAccMessage 由后端在实际格式化正文时编码字段，持有独立快照。
+type logAccMessage struct {
+	message string
+	fields  map[string]any
+	start   time.Time
+}
+
+func (m *logAccMessage) String() (message string) {
+	message = m.message
+	if !m.start.IsZero() {
+		message = fmt.Sprintf("[%s] %s", time.Since(m.start), message)
+	}
+	attrs := make([]slog.Attr, 0, len(m.fields))
+	for _, key := range slices.Sorted(maps.Keys(m.fields)) {
+		attrs = append(attrs, slog.Any(key, m.fields[key]))
+	}
+	fields, _ := attributeFields(attrs)
+	if len(fields) == 0 {
+		return
+	}
+	data, err := encodeFields(fields)
+	if err != nil {
+		_, _ = fmt.Fprintf(os.Stderr, "logx: %v\n%s", err, debug.Stack())
+	}
+	if message == "" {
+		return string(data)
+	}
+	return message + " " + string(data)
 }
 
 // Debug 合并可选键值对并打印当前字段快照。

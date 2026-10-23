@@ -210,7 +210,7 @@ func TestLogxIntegrationCallerAndTrace(t *testing.T) {
 	config := quietConfig()
 	config.DisableLog = false
 	client := mustClient(t, config, WithLogAcc(func() (acc adapter.LogAcc) {
-		return logx.NewLogAccAdapter(logx.WithLogger(logger))
+		return logx.NewLogAccAdapter(logx.WithLogger(logx.NewLoggerAdapter(logger)))
 	}), WithHTTPClient(&http.Client{Transport: transport}))
 	ctx := context.WithValue(t.Context(), traceKey{}, "trace-http")
 	_, file, doLine, _ := runtime.Caller(0)

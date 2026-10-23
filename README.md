@@ -44,9 +44,9 @@ whtlib/
 
 组件可选注入现有非泛型 `adapter.Logger`，包含 `Skip(n) Logger`、Debug/Info/Warn/Error 及四个格式化方法。普通参数按空格拼接正文；接口不包含 Log、SetConfig 或 Close。adapter 仅依赖标准库，日志配置与生命周期由调用方管理。
 
-接入具体日志库时需满足完整方法签名。当前 `logx.Logger.Skip` 返回 `*logx.Logger`，需要调用方提供包装器转换为 `adapter.Logger` 的返回类型；Go 接口不支持返回类型协变。
+接入具体日志库时需满足完整方法签名。`logx.NewLoggerAdapter(logger)` 可将现有 `*logx.Logger` 转为 `adapter.Logger`；其他日志库可提供薄适配器，参见 [GoFrame 接入示例](examples/logacc_goframe/README.md)。Skip 返回借用视图，配置与关闭由后端创建方负责。
 
-累计结构化字段使用独立的 `adapter.LogAcc`，包含 SetStartTime、字段更新和四种打印方法。`logx.NewLogAccAdapter(...)` 提供现成适配，日志后端仍由调用方管理。tkhttp 通过 `LogAccFactory` 在每次调用创建新累加器，LogAcc 不提供 Clone。
+累计结构化字段使用独立的 `adapter.LogAcc`，包含 SetStartTime、字段更新和四种打印方法。`logx.NewLogAccAdapter(...)` 提供现成适配，`logx.WithLogger(backend)` 注入 `adapter.Logger`，可使用 GoFrame 等后端。tkhttp 通过 `LogAccFactory` 在每次调用创建新累加器，LogAcc 不提供 Clone。
 
 ## HTTP 客户端
 

@@ -51,7 +51,7 @@ func TestPlainArguments(t *testing.T) {
 		}
 	}
 	buffer.Reset()
-	NewLogAcc(WithLogger(logger)).Info(t.Context(), "订单", "id", 123, "state", "完成")
+	NewLogAcc(WithLogger(NewLoggerAdapter(logger))).Info(t.Context(), "订单", "id", 123, "state", "完成")
 	if !strings.HasSuffix(buffer.String(), " 订单 {\"id\":123,\"state\":\"完成\"}\n") {
 		t.Fatalf("structured output: %q", buffer.String())
 	}

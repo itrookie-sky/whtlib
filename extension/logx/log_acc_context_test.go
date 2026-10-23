@@ -26,7 +26,7 @@ func TestLogAccTraceContext(t *testing.T) {
 			logger := newBufferedLogger(t, &buffer, config)
 			var acc *LogAcc
 			if tc.injected {
-				acc = NewLogAcc(WithLogger(logger))
+				acc = NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 			} else {
 				previous := defaultLogger
 				defaultLogger = logger

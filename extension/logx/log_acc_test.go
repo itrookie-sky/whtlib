@@ -19,7 +19,7 @@ import (
 func TestLogAccOverwriteAndSnapshot(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
-	acc := NewLogAcc(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	if acc.SetValue("one", 1) != acc || acc.Update(map[string]any{"one": 2, "two": true}) != acc {
 		t.Fatal("identity changed")
 	}
@@ -69,7 +69,7 @@ func TestLogAccDeferredLifecycle(t *testing.T) {
 				output := &globalBuffer
 				if injected {
 					logger := newBufferedLogger(t, &customBuffer, Config{})
-					ops = append(ops, WithLogger(logger))
+					ops = append(ops, WithLogger(NewLoggerAdapter(logger)))
 					output = &customBuffer
 				}
 				// 在业务执行期间不应打印；两个 defer 都在命名返回值赋值后执行。
@@ -136,7 +136,7 @@ func TestLogAccDeferredLifecycle(t *testing.T) {
 func TestLogAccNilErrorPreservesFields(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
-	acc := NewLogAcc(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	err := errors.New("original error")
 	acc.SetErr(&err)
 	acc.SetErr(nil)
@@ -163,7 +163,7 @@ func TestLogAccZeroValueUsesDefault(t *testing.T) {
 func TestLogAccCallersAndCost(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{Level: slog.LevelDebug})
-	acc := NewLogAcc(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	_, file, line, _ := runtime.Caller(0)
 	acc.Info(t.Context(), "direct")
 	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" direct") {
@@ -177,7 +177,7 @@ func TestLogAccCallersAndCost(t *testing.T) {
 		t.Fatal(buffer.String())
 	}
 	buffer.Reset()
-	cost := NewLogAcc(WithLogger(logger), WithCost(time.Now().Add(-time.Second)))
+	cost := NewLogAcc(WithLogger(NewLoggerAdapter(logger)), WithCost(time.Now().Add(-time.Second)))
 	cost.Info(t.Context(), "cost")
 	if !strings.Contains(buffer.String(), " [INFO] ") || !strings.Contains(buffer.String(), "] cost") {
 		t.Fatal(buffer.String())
@@ -196,7 +196,7 @@ func logAccWrapped(ctx context.Context, acc *LogAcc) { acc.Info(ctx, "wrapped") 
 func TestLogAccConcurrentUpdatesAndPrint(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
-	acc := NewLogAcc(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	var wg sync.WaitGroup
 	for i := range 4 {
 		wg.Go(func() {
@@ -248,7 +248,7 @@ func TestLogAccInvalidPairsAreAtomic(t *testing.T) {
 
 // logAccRequest 对齐 libclient.DoRequest 的延迟 Debug、Skip 和返回值指针用法。
 func logAccRequest(ctx context.Context, logger *Logger) (resRaw string, err error) {
-	acc := NewLogAcc(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	defer acc.Skip(1).Debug(ctx, "DoRequest", "resRaw", &resRaw)
 	defer acc.SetErr(&err)
 	acc.Update(map[string]any{"host": "example.test"})

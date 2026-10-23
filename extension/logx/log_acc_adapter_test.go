@@ -17,17 +17,18 @@ func TestLogAccNewInstanceAndStartTime(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
 	start := time.Now().Add(-time.Second)
-	first := NewLogAcc(WithLogger(logger), WithCost(start)).SetValue("source", "first").Skip(2)
-	second := NewLogAcc(WithLogger(logger)).SetValue("source", "second").Skip(1)
+	loggerBackend := NewLoggerAdapter(logger)
+	first := NewLogAcc(WithLogger(loggerBackend), WithCost(start)).SetValue("source", "first").Skip(2)
+	second := NewLogAcc(WithLogger(loggerBackend)).SetValue("source", "second").Skip(1)
 	fields, backend, firstStart, skip := first.snapshot(nil)
-	if fields["source"] != "first" || len(fields) != 1 || backend != logger || firstStart != start || skip != 2 {
+	if fields["source"] != "first" || len(fields) != 1 || backend != loggerBackend || firstStart != start || skip != 2 {
 		t.Fatalf("first instance changed: %v, %v, %d", fields, firstStart, skip)
 	}
 	fields, backend, secondStart, skip := second.snapshot(nil)
-	if fields["source"] != "second" || len(fields) != 1 || backend != logger || !secondStart.IsZero() || skip != 1 {
+	if fields["source"] != "second" || len(fields) != 1 || backend != loggerBackend || !secondStart.IsZero() || skip != 1 {
 		t.Fatalf("second instance shared state: %v, %v, %d", fields, secondStart, skip)
 	}
-	acc := NewLogAcc(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	if acc.SetStartTime(start) != acc {
 		t.Fatal("SetStartTime must return receiver")
 	}
@@ -45,7 +46,7 @@ func TestLogAccNewInstanceAndStartTime(t *testing.T) {
 func TestLogAccAdapterCallerAndChain(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{Level: slog.LevelDebug})
-	acc := NewLogAccAdapter(WithLogger(logger))
+	acc := NewLogAccAdapter(WithLogger(NewLoggerAdapter(logger)))
 	if acc.SetValue("a", 1) != acc || acc.Update(map[string]any{"b": 2}) != acc || acc.SetStartTime(time.Time{}) != acc || acc.Skip(0) != acc {
 		t.Fatal("adapter methods must retain chain identity")
 	}
@@ -70,13 +71,13 @@ func TestLogAccAdapterCallerAndChain(t *testing.T) {
 func TestLogAccConcurrentStartAndOutput(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
-	acc := NewLogAcc(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	var wg sync.WaitGroup
 	for worker := range 4 {
 		wg.Go(func() {
 			for range 20 {
 				acc.SetStartTime(time.Now()).SetValue("worker", worker)
-				requestAcc := NewLogAcc(WithLogger(logger))
+				requestAcc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 				requestAcc.SetStartTime(time.Time{}).Info(t.Context(), "request")
 				acc.Info(t.Context(), "source")
 			}

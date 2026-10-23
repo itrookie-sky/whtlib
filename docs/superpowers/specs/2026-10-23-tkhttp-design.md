@@ -116,10 +116,12 @@ LogAcc 接口和具体实现均不提供 Clone。每次调用由 LogAccFactory �
 
 ```go
 func (a *LogAcc) SetStartTime(start time.Time) (acc *LogAcc)
+func WithLogger(logger adapter.Logger) (op LogAccOptionFunc)
+func NewLoggerAdapter(logger *Logger) (result adapter.Logger)
 func NewLogAccAdapter(opts ...LogAccOptionFunc) (acc adapter.LogAcc)
 ```
 
-NewLogAccAdapter 直接创建一个累计器及其包内私有薄包装，调用方可以在创建时传 WithLogger、WithCost，也可以通过返回接口的 SetStartTime 再修改起点。不传 Logger 时由 logx 选择其全局实例，后端仍由调用方管理。包装器转发链式操作并返回自身，构造时仅补偿自身一层调用栈。现有具体 LogAcc 的链式方法返回 `*logx.LogAcc`，不能直接满足返回 adapter.LogAcc 的接口，因此保留薄适配层。
+NewLogAccAdapter 直接创建一个累计器及其包内私有薄包装，调用方可以在创建时传 WithLogger、WithCost，也可以通过返回接口的 SetStartTime 再修改起点。WithLogger 接收 adapter.Logger，支持 GoFrame 等后端；LogAcc 负责累计字段 JSON 和耗时正文，后端负责级别、context 和实际写入。不传 Logger、传 nil 或 typed nil 时使用全局 logx Logger 的适配器，后端仍由调用方管理。使用 logx 实例时通过 NewLoggerAdapter 转为共享契约，Skip 只借用后端，不增加文件引用。包装器转发链式操作并返回自身，构造时仅补偿自身一层调用栈。现有具体 LogAcc 的链式方法返回 `*logx.LogAcc`，不能直接满足返回 adapter.LogAcc 的接口，因此保留薄适配层。
 
 ```go
 acc := logx.NewLogAccAdapter(logx.WithCost(time.Now()))
@@ -395,7 +397,7 @@ func fetchDevices(ctx context.Context, factory tkhttp.LogAccFactory) (result map
 }
 ```
 
-调用方传入一个 LogAccFactory，在函数内通过 `logx.NewLogAccAdapter(logx.WithLogger(logger))` 创建新实例，也可使用其他满足 adapter 契约的实现。实际服务在启动时创建并共享 Client，退出时清理自有空闲连接；每次调用传入 context 和目标地址，RequestConfig 按需省略或覆盖。只需要 HTTP 而不记录日志时，可使用 `Config{BaseURL: baseURL, DisableLog: true}` 省略日志工厂。
+调用方传入一个 LogAccFactory，在函数内通过 `logx.NewLogAccAdapter(logx.WithLogger(backend))` 创建新实例，backend 为 adapter.Logger，可使用 GoFrame 适配器或 logx.NewLoggerAdapter(logger)。也可使用其他满足 adapter.LogAcc 契约的实现。实际服务在启动时创建并共享 Client，退出时清理自有空闲连接；每次调用传入 context 和目标地址，RequestConfig 按需省略或覆盖。只需要 HTTP 而不记录日志时，可使用 `Config{BaseURL: baseURL, DisableLog: true}` 省略日志工厂。
 
 ## 文件组织与验证建议
 

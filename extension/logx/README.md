@@ -164,7 +164,7 @@ defer wrapped.Close()
 
 ## LogAcc 累积日志字段
 
-`LogAcc` 参考 LogContext 的用法，内部使用锁保护的私有 map，不依赖 GoFrame。字段按键排序输出为日志末尾的结构化 JSON，ctx 特殊字段在时间和级别后输出。
+`LogAcc` 参考 LogContext 的用法，内部使用锁保护的私有 map，通过 `adapter.Logger` 输出日志。累计器负责耗时前缀和按键排序的字段 JSON；日志级别过滤、ctx 字段、时间、调用位置及写入方式由注入后端负责。默认后端为全局 logx Logger。
 
 ```go
 acc := logx.NewLogAcc() // 默认使用全局 Logger
@@ -173,13 +173,24 @@ acc.Update(map[string]any{"status": "created", "count": 1})
 acc.Info(ctx, "创建订单", "status", "done", "count", 2)
 ```
 
-指定实例和耗时起点使用闭包选项：
+`WithLogger` 接收 `adapter.Logger`，指定 logx 实例时先通过 `NewLoggerAdapter` 适配：
 
 ```go
-acc := logx.NewLogAcc(logx.WithLogger(logger), logx.WithCost(time.Now()))
+backend := logx.NewLoggerAdapter(logger) // logger 为 *logx.Logger，可共享 backend。
+acc := logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
 acc.SetValue("userId", 1001).Update(map[string]any{"action": "save"})
 acc.Info(ctx, "保存完成")
 ```
+
+GoFrame 等后端实现 `adapter.Logger` 后可直接注入，无需创建 logx Logger：
+
+```go
+backend := NewGoFrameLogger(glog.New())
+acc := logx.NewLogAcc(logx.WithLogger(backend))
+acc.SetValue("orderId", "o123").Info(ctx, "创建订单")
+```
+
+`NewGoFrameLogger` 为示例中的薄适配器，完整实现、HTTP 工厂及运行命令见 [GoFrame 示例](../../examples/logacc_goframe/README.md)。根模块不依赖 GoFrame；普通日志接口按正文拼接，LogAcc 将累计字段编码为正文末尾 JSON 后再交给后端，被过滤的日志不编码字段。
 
 `SetValue` 覆盖单个字段，`Update` 原子合并多个字段，均返回原累积器。Info/Debug/Warn/Error 的额外参数为 `key, value` 对，覆盖后的字段继续保留供后续打印使用；奇数参数或非 string key 会 panic，整批校验失败不会部分写入。所有打印方法必须传 ctx，无错误返回。
 
@@ -196,7 +207,7 @@ defer acc.SetErr(&err) // defer 逆序执行，先保存最终错误再打印。
 开始时间也可在创建后通过 `SetStartTime(start)` 修改，传入零时间关闭耗时前缀。修改起点与字段快照受同一把锁保护，可与打印并发执行。
 
 ```go
-requestAcc := logx.NewLogAcc(logx.WithLogger(logger), logx.WithCost(time.Now()))
+requestAcc := logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
 requestAcc.SetStartTime(time.Now())
 requestAcc.SetValue("requestId", "r1").Info(ctx, "处理完成")
 ```
@@ -207,10 +218,10 @@ LogAcc 不提供 Clone。每次调用通过 NewLogAcc 或 NewLogAccAdapter 创�
 
 ```go
 factory := func() (acc adapter.LogAcc) {
-    acc = logx.NewLogAccAdapter(logx.WithLogger(logger), logx.WithCost(time.Now()))
+    acc = logx.NewLogAccAdapter(logx.WithLogger(backend), logx.WithCost(time.Now()))
     return acc.SetValue("component", "http")
 }
 // 可通过 tkhttp.WithLogAcc(factory) 注入，每次调用都创建新实例。
 ```
 
-累积器不拥有 Logger，不需要 Close，也不会每次打印创建派生 Logger；注入实例由调用方负责关闭。零值 LogAcc 可用，默认使用全局 Logger。使用后不要按值复制 LogAcc 结构体；需要独立累计时重新创建实例。并发安全范围是字段更新、起点、Skip 与快照，不包括字段值引用的可变对象；外部 map/slice/指针以及传给 SetErr 的 error 变量仍需调用方同步。快照完成后释放锁再编码、写入日志。
+累积器不拥有 Logger，不需要 Close；打印时借用后端的 Skip 视图，`NewLoggerAdapter` 不增加 logx 文件引用。注入实例由调用方负责关闭；不传 WithLogger、传 nil 或 typed nil 时使用全局 logx Logger。零值 LogAcc 可用。使用后不要按值复制 LogAcc 结构体；需要独立累计时重新创建实例。并发安全范围是字段更新、起点、Skip 与快照，不包括字段值引用的可变对象；外部 map/slice/指针以及传给 SetErr 的 error 变量仍需调用方同步。快照完成后释放锁再编码、写入日志。
