@@ -5,7 +5,6 @@ import (
 	"math"
 	"net/http"
 	"net/url"
-	"reflect"
 	"time"
 )
 
@@ -56,16 +55,4 @@ func normalizeConfig(config Config) (normalized Config, baseURL *url.URL, err er
 		return
 	}
 	return
-}
-
-func isNil(value any) (nilValue bool) {
-	if value == nil {
-		return true
-	}
-	ref := reflect.ValueOf(value)
-	switch ref.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		return ref.IsNil()
-	}
-	return false
 }

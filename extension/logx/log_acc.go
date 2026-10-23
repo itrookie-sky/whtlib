@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/itrookie-sky/whtlib/adapter"
+	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
 // LogAcc 并发安全地累积日志字段，使用后不能按值复制。
@@ -112,11 +113,11 @@ func (a *LogAcc) snapshot(args []any) (fields map[string]any, logger adapter.Log
 }
 
 func (a *LogAcc) output(ctx context.Context, level slog.Level, message string, args []any) {
-	if isNil(ctx) {
+	if reflectx.IsNil(ctx) {
 		panic("logx: nil context")
 	}
 	fields, logger, start, skip := a.snapshot(args)
-	if isNil(logger) {
+	if reflectx.IsNil(logger) {
 		logger = NewLoggerAdapter(nil)
 	}
 	// 公开累加器方法和本方法各占一层，后端适配器补偿其自身封装。
@@ -126,7 +127,7 @@ func (a *LogAcc) output(ctx context.Context, level slog.Level, message string, a
 		totalSkip = skip + 2
 	}
 	view := logger.Skip(totalSkip)
-	if isNil(view) {
+	if reflectx.IsNil(view) {
 		panic("logx: Logger.Skip returned nil")
 	}
 	// 惰性编码保留后端级别过滤能力，不向普通日志接口传入结构化键值对。
@@ -196,7 +197,7 @@ func (a *LogAcc) Error(ctx context.Context, message string, args ...any) {
 // SetErr 读取当前错误并覆盖 err 字段；nil 指针或 nil 错误保持已有字段。
 // 可使用 defer acc.SetErr(&err)，调用方负责同步 error 变量的读写。
 func (a *LogAcc) SetErr(value *error) (acc *LogAcc) {
-	if value == nil || isNil(*value) {
+	if value == nil || reflectx.IsNil(*value) {
 		return a
 	}
 	return a.SetValue("err", (*value).Error())

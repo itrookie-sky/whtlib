@@ -6,6 +6,8 @@ import (
 	"reflect"
 	"regexp"
 	"slices"
+
+	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
 // ContextField 指定日志字段名称及其 context key。
@@ -28,20 +30,8 @@ type Config struct {
 
 var fieldNamePattern = regexp.MustCompile(`^[A-Za-z_-][A-Za-z0-9_-]*$`)
 
-func isNil(v any) (result bool) {
-	if v == nil {
-		return true
-	}
-	rv := reflect.ValueOf(v)
-	switch rv.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
-		return rv.IsNil()
-	}
-	return false
-}
-
 func validKey(key any) (valid bool) {
-	return !isNil(key) && reflect.ValueOf(key).Comparable()
+	return !reflectx.IsNil(key) && reflect.ValueOf(key).Comparable()
 }
 
 // BuildDefaultConfig 构建默认的 Config。
@@ -52,7 +42,7 @@ func BuildDefaultConfig(config Config) (result Config, err error) {
 	}
 	if result.Level == nil {
 		result.Level = slog.LevelInfo
-	} else if isNil(result.Level) {
+	} else if reflectx.IsNil(result.Level) {
 		return result, invalidConfig("nil level")
 	}
 	result.Level = result.Level.Level()

@@ -8,6 +8,8 @@ import (
 	"runtime/debug"
 	"strings"
 	"time"
+
+	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
 type CtxKey string
@@ -76,7 +78,7 @@ const (
 )
 
 func (l *Logger) output(ctx context.Context, level slog.Level, message string, args []any, mode outputMode) {
-	if isNil(ctx) {
+	if reflectx.IsNil(ctx) {
 		panic("logx: nil context")
 	}
 	err := l.core.initialize()

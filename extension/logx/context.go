@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"reflect"
+
+	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
 type jsonField struct {
@@ -46,7 +48,7 @@ func encodeFields(fields []jsonField) (data []byte, err error) {
 // appendContextField 读取上下文字段，忽略 nil 和空字符串。
 func appendContextField(ctx context.Context, fields []jsonField, name string, key any) (result []jsonField) {
 	value := ctx.Value(key)
-	if isNil(value) {
+	if reflectx.IsNil(value) {
 		return fields
 	}
 	rv := reflect.ValueOf(value)

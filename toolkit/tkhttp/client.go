@@ -7,6 +7,8 @@ import (
 	"net/url"
 	"slices"
 	"time"
+
+	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
 // Client 固定配置并复用连接池，支持并发调用；应通过 New 创建。
@@ -64,7 +66,7 @@ func New(config Config, opts ...Option) (client *Client, err error) {
 	if selected.transportSet {
 		native.Transport = selected.transport
 	}
-	if native.Transport != nil && isNil(native.Transport) {
+	if native.Transport != nil && reflectx.IsNil(native.Transport) {
 		err = invalidConfig("selected Transport must not be typed nil")
 		return
 	}
@@ -132,7 +134,7 @@ func (c *Client) do(ctx context.Context, method, target string, configs []Reques
 	}
 	if !c.config.DisableLog {
 		state.acc = c.logAccFactory()
-		if isNil(state.acc) {
+		if reflectx.IsNil(state.acc) {
 			err = state.failure(ErrLogAcc)
 			return
 		}
@@ -141,7 +143,7 @@ func (c *Client) do(ctx context.Context, method, target string, configs []Reques
 		state.acc.Skip(3)
 	}
 	logContext := ctx
-	if isNil(logContext) {
+	if reflectx.IsNil(logContext) {
 		logContext = context.Background()
 	}
 	defer state.finish(logContext, &response, &err)
@@ -163,7 +165,7 @@ func (c *Client) execute(ctx context.Context, method, target string, configs []R
 	if validToken(method) {
 		state.method = method
 	}
-	if isNil(ctx) {
+	if reflectx.IsNil(ctx) {
 		err = state.failure(invalidRequest("context must not be nil"))
 		return
 	}

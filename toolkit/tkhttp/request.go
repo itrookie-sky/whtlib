@@ -11,6 +11,8 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+
+	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
 func parseBaseURL(raw string) (base *url.URL, err error) {
@@ -142,7 +144,7 @@ func selectConfig(configs []RequestConfig) (config RequestConfig, err error) {
 		err = invalidRequest("Timeout must be positive, zero or -1")
 		return
 	}
-	if config.Result != nil && (reflect.TypeOf(config.Result).Kind() != reflect.Pointer || isNil(config.Result)) {
+	if config.Result != nil && (reflect.TypeOf(config.Result).Kind() != reflect.Pointer || reflectx.IsNil(config.Result)) {
 		err = invalidRequest("Result must be a non-nil pointer")
 		return
 	}

@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+
+	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
 type outputState struct {
@@ -72,7 +74,7 @@ func attributeFields(attrs []slog.Attr) (fields []jsonField, err error) {
 			continue
 		}
 		value := attr.Value.Any()
-		if e, ok := value.(error); ok && !isNil(e) {
+		if e, ok := value.(error); ok && !reflectx.IsNil(e) {
 			value = e.Error()
 		}
 		fields = append(fields, jsonField{name: attr.Key, value: value})
