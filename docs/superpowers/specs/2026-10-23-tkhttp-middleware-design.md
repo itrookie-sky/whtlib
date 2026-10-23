@@ -72,6 +72,34 @@ client, err := tkhttp.New(
 
 中间件返回 nil Handler 属于运行期构造失败，返回 ErrMiddleware，不发请求。调用方或中间件 panic 沿用现有传播方式，不新增 recover。
 
+## 错误集中声明与封装
+
+用户已确认：包内所有具有封装价值的错误，在独立文件中统一声明。沿用现有 `toolkit/tkhttp/error.go`，集中维护导出的哨兵错误、自定义错误类型、Error/Unwrap/Is 方法及内部构造、包装助手，不在其他业务文件中零散声明。
+
+错误类别按调用方可以稳定判断和处理的边界划分，建议完整集合如下：
+
+| 哨兵错误 | 含义 |
+| --- | --- |
+| ErrInvalidConfig | 客户端配置或注入依赖无效，包括 nil 中间件 |
+| ErrInvalidRequest | 请求参数无效，包括配置数量、地址、请求头和输入冲突 |
+| ErrRequestEncode | 请求正文编码失败，保留具体编码错误 |
+| ErrRequestHook | 签名或鉴权钩子执行失败，保留原始原因 |
+| ErrTransport | 网络发送阶段失败，保留原始网络或 context 错误 |
+| ErrResponseRead | 响应读取失败，包括超出读取限额 |
+| ErrResponseTooLarge | 响应超过配置读取限额，同时归属 ErrResponseRead |
+| ErrHTTPStatus | HTTP 状态码非 2xx，具体状态码由 StatusError 提供 |
+| ErrResponseDecode | JSON 响应解码失败，保留具体 JSON 错误 |
+| ErrLogAcc | 工厂返回 nil/typed nil 日志累加器 |
+| ErrMiddleware | 中间件执行失败、返回 nil Handler、返回无效结果或违反调用约定 |
+
+保留已有错误标识及错误类型，不改变其字段类型或取消原有匹配能力。`RequestError` 继续使用 Phase 和 Err 描述失败阶段及原因，支持 Unwrap；Phase 扩展 middleware。`StatusError` 保留 StatusCode，并通过 Is 支持 `errors.Is(err, ErrHTTPStatus)`，调用方仍可通过 `errors.AsType[*StatusError]` 获取状态码。
+
+阶段错误增加包级类别时必须保留底层错误链。例如读取异常可封装为 `RequestError{Phase: "read", Err: errors.Join(ErrResponseRead, cause)}`；超限时同时保留 ErrResponseTooLarge。中间件透传或通过 %w 包装后，调用方仍能判断包级类别以及具体原因，不能只把错误转为字符串。
+
+`context.Canceled`、`context.DeadlineExceeded` 直接复用标准库标识，不另造 ErrCanceled 或 ErrTimeout；网络、I/O、JSON 错误类型保留在错误链中。具体参数校验原因继续作为 ErrInvalidRequest 或 ErrInvalidConfig 的内部说明，不为每个字段、每条校验文本新增导出变量。
+
+对外错误文本保持现有约束：RequestError.Error 不泄露 URL、正文或底层原始错误文本；StatusError.Error 仅包含状态码。原始原因供调用方显式解包使用，汇总日志按分类记录，不直接打印可能包含敏感数据的底层错误。
+
 ## 日志、超时和资源
 
 汇总日志位于中间件链外层，使用整条链最终返回的 Response 和 error，包含前置及后置耗时。中间件提前拒绝或改变返回错误，也只打印一次汇总日志；日志阶段应反映最终结果，不能在错误被处理中消除后保留失败分类。
@@ -100,6 +128,6 @@ func observe(next tkhttp.Handler) (handler tkhttp.Handler) {
 
 ## 后续实现与验证范围
 
-实现将涉及 options.go、client.go、独立 middleware.go、错误及日志分类、README。先保留现有 RequestHook，避免要求调用方迁移签名实现。
+实现将涉及 options.go、client.go、独立 middleware.go、集中错误文件 error.go、日志分类及 README。先保留现有 RequestHook，避免要求调用方迁移签名实现。业务代码复用 error.go 的错误声明和包装助手。
 
-相关验证应覆盖注册顺序、空列表、nil 中间件、提前拒绝、无效结果、全部核心错误透传、errors.Is/AsType、日志一次输出及并发隔离。沿用本次对话已获批准的 tkhttp/LogAcc 相关测试范围，仅运行受影响包，不连接外部平台或数据库。
+相关验证应覆盖注册顺序、空列表、nil 中间件、提前拒绝、无效结果、全部核心错误透传、包级错误分类与原始原因的 errors.Is/AsType、日志一次输出及并发隔离。沿用本次对话已获批准的 tkhttp/LogAcc 相关测试范围，仅运行受影响包，不连接外部平台或数据库。
