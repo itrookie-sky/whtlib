@@ -4,7 +4,7 @@
 
 在 `toolkit/tkhttp` 提供框架无关、可并发复用的 HTTP 客户端。基本参数通过 `Config` 传入，单次请求参数通过 `RequestConfig` 传入，函数选项仅用于可选依赖注入。
 
-用户已确认：使用现有 `logx.LogAcc` 累计字段；每次 HTTP 逻辑调用独立累计，包含重试，结束打印一条汇总日志。连接池基于标准库，通过函数选项注入，未注入时创建默认连接池。基本参数使用 Config，有合理默认值的补齐默认值，无法默认的必填参数缺失时直接报错。其他默认值和以下 API 均为本设计的建议，尚未实现。
+用户已确认：在现有 `adapter` 包声明 LogAcc 契约，通过依赖注入供 tkhttp 使用，`logx` 提供实现；每次 HTTP 逻辑调用独立累计，包含重试，结束打印一条汇总日志。连接池基于标准库，通过函数选项注入，未注入时创建默认连接池。基本参数使用 Config，有合理默认值的补齐默认值，无法默认的必填参数缺失时直接报错。其他默认值和以下 API 均为本设计的建议，尚未实现。
 
 本次交付设计文档。后续实现以确认后的设计为准，在当前仓库的 `main` 分支完成。
 
@@ -16,7 +16,7 @@
 | 引入第三方 HTTP 客户端再包装 | 可直接获得部分便捷请求和重试能力 | 增加依赖，仍需统一重试边界与 `LogAcc` 日志；目前需求不足以支持该成本 |
 | 仅实现 `RoundTripper` 中间件 | 方便接入已有原生 HTTP 调用 | 无法覆盖调用方后续读取和解码失败，不适合承担整次调用的汇总日志 |
 
-采用第一种方案。`tkhttp` 直接复用同仓库的 `logx`，保持框架无关。现有 `adapter.Logger` 的普通参数采用正文拼接语义，不能代替 `LogAcc` 的结构化累计；本次无需修改其接口或字段类型。
+采用第一种方案。沿用仓库已有的 `adapter/` 命名，在其中声明通用 `LogAcc` 接口与工厂类型，由 `logx` 提供适配实现，`tkhttp` 仅依赖 `adapter`，通过工厂注入累计日志能力。现有 `adapter.Logger` 的普通参数采用正文拼接语义，保持其接口和字段类型不变，结构化累计由独立的 LogAcc 契约承担。
 
 ## 首版范围
 
@@ -25,7 +25,7 @@
 - 提供缓冲响应、可选 JSON 解码、明确的状态码错误和响应大小限制。
 - 支持总超时、有限重试、指数退避和随机抖动。
 - 提供签名请求头钩子，由调用方组合 `tksign`。
-- 使用 `LogAcc` 打印整次调用的一条最终日志。
+- 注入 `adapter.LogAccFactory`，为每次调用创建独立 LogAcc，打印一条最终日志。
 
 流式响应、SSE、WebSocket、multipart 文件上传、大文件下载、缓存、限流和熔断留待独立需求。重试策略先在 `tkhttp` 内部实现；出现第二个实际消费者时，再抽取公共 `tkretry`，避免预先创建仅有一个使用方的抽象。
 
@@ -36,6 +36,7 @@
 ```go
 func New(config Config, opts ...Option) (client *Client, err error)
 func WithTransport(transport *http.Transport) (option Option)
+func WithLogAccFactory(factory adapter.LogAccFactory) (option Option)
 
 func (c *Client) Do(ctx context.Context, method, target string, config RequestConfig) (response *Response, err error)
 func (c *Client) Get(ctx context.Context, target string, config RequestConfig) (response *Response, err error)
@@ -70,7 +71,7 @@ type Config struct {
 
 `New` 统一复制配置、补齐默认值并验证所有参数。BaseURL 缺失、无效 URL、非法 Header、无效时长或限额等返回 `ErrInvalidConfig`，错误指出字段和原因，不猜测域名、不静默修正非法值。精确 -1 指原始 `time.Duration(-1)`，不是 `-time.Second`。默认值补齐后才选择和创建连接池，初始化失败不遗留自有资源。
 
-Config 中不包含 Transport、HTTPClient、Logger 和 RequestHook 等运行期依赖，也不为这些依赖再提供同名配置字段；调用方可以用配置文件或普通结构体集中管理基本参数。
+Config 中不包含 Transport、HTTPClient、LogAccFactory 和 RequestHook 等运行期依赖，也不为这些依赖再提供同名配置字段；调用方可以用配置文件或普通结构体集中管理基本参数。日志默认开启，此时 New 必须同时获得有效的 LogAccFactory 注入；缺失时直接返回 `ErrInvalidConfig`。Config.DisableLog 为 true 时可省略工厂，不创建累加器。
 
 ### 可选依赖注入
 
@@ -78,10 +79,45 @@ Config 中不包含 Transport、HTTPClient、Logger 和 RequestHook 等运行期
 | --- | --- |
 | `WithTransport(*http.Transport)` | 直接借用指定的标准库连接池；显式 nil 无效；优先于注入客户端的 Transport |
 | `WithHTTPClient(*http.Client)` | 借用 Transport、Jar 和 Timeout 等公开配置；显式 nil 无效；Transport 为 nil 且没有 WithTransport 时创建默认池 |
-| `WithLogger(*logx.Logger)` | 默认使用 `logx.Default()`；nil 同样表示全局实例，生命周期由调用方管理 |
+| `WithLogAccFactory(adapter.LogAccFactory)` | 日志开启时必填；显式 nil 无效；每次调用创建独立累加器，后端生命周期由调用方管理 |
 | `WithRequestHook(RequestHook)` | 每次执行尝试前生成签名或鉴权请求头；nil 表示未配置 |
 
 忽略 nil 选项，同类注入以后一次为准。配置在构造期间固定，初始化后不提供配置修改方法。Config 默认容器在 New 中复制，依赖实例按后文的借用约定持有。
+
+### LogAcc 共享契约与实现适配
+
+以下声明计划放在 `adapter/log_acc.go`，仅依赖标准库 `context` 和 `time`：
+
+```go
+// LogAcc 定义累计字段和结构化打印的共享契约。
+type LogAcc interface {
+	SetValue(key string, value any) (acc LogAcc)
+	Update(values map[string]any) (acc LogAcc)
+	Skip(n int) (acc LogAcc)
+	SetErr(value *error) (acc LogAcc)
+	Debug(ctx context.Context, message string, args ...any)
+	Info(ctx context.Context, message string, args ...any)
+	Warn(ctx context.Context, message string, args ...any)
+	Error(ctx context.Context, message string, args ...any)
+}
+
+// LogAccFactory 为一次逻辑调用创建独立的累计器，自身应支持并发调用。
+type LogAccFactory func(start time.Time) (acc LogAcc)
+```
+
+SetValue、Update、Skip 和 SetErr 返回同一逻辑累加器，保留链式语义；打印参数按 `key, value` 对合并，并以结构化字段输出。SetErr 保留现有错误字段累计约定，tkhttp 的日志仍只写入受控错误分类。工厂每次返回字段为空、业务额外 Skip 为零的独立实例，不复用上一请求的字段 map；start 供实现计算可读耗时使用，tkhttp 始终另行累计结构化 costMs。LogAcc 和工厂均不提供 Close，日志后端由注入方管理。
+
+`extension/logx` 增加适配工厂：
+
+```go
+func NewLogAccFactory(logger *Logger) (factory adapter.LogAccFactory)
+```
+
+该工厂每次创建一个现有 `logx.LogAcc`，设置 `WithLogger(logger)` 与 `WithCost(start)`，再用包内私有薄包装实现 adapter.LogAcc；创建时一次性补偿包装器自身的打印栈层数，不在每次打印时累计追加 Skip。logger 为 nil 时由 logx 选择其全局实例。工厂仅创建请求字段状态，复用长期 Logger，不为每次请求创建或关闭日志后端。
+
+现有 LogAcc 的链式方法返回 `*logx.LogAcc`，与返回 adapter.LogAcc 的接口签名并不相同，因此不能直接赋值为该接口；私有包装器转发调用并返回自身，现有公开方法和返回类型保持兼容。依赖方向为 `tkhttp → adapter`、`logx → adapter`，调用方负责组合工厂；tkhttp 不导入 logx，不持有具体 Logger，也不通过类型别名将具体实现放进 adapter。
+
+不提供注入单个累加器实例的入口，避免多个并发请求或连续请求共享可变字段。省略工厂时仅在显式关闭日志的配置下允许初始化；tkhttp 不隐式选择某个具体日志实现。显式 nil 工厂在 New 中拒绝；工厂在 Do 中返回 nil 或 typed nil 时返回 `ErrLogAccFactory`，不执行请求钩子或网络操作，也不回退到隐藏 Logger。工厂契约无效时无法生成汇总日志，由调用方处理这一依赖错误；正常的一次输出保证以工厂返回有效独立累加器为前提。
 
 ### 单次请求配置
 
@@ -158,6 +194,7 @@ transport := &http.Transport{
 client, err := tkhttp.New(
 	tkhttp.Config{BaseURL: "https://api.example.com/v1/"},
 	tkhttp.WithTransport(transport),
+	tkhttp.WithLogAccFactory(logx.NewLogAccFactory(nil)),
 )
 // 处理 err；可将同一个 transport 注入其他 Client，共享实际连接池。
 ```
@@ -193,7 +230,7 @@ client, err := tkhttp.New(
 
 `tkhttp` 始终新建私有 `http.Client`。注入客户端时只复制公开配置，再应用最终 Transport 和组件重定向规则，不修改传入客户端；Transport/Jar 是借用资源，应满足原生 HTTP 客户端的并发约定。
 
-`CloseIdleConnections` 只作用于组件创建的 Transport，借用 Transport 时为空操作；不取消正在执行的请求。HTTP 响应体统一由组件读取并关闭，返回值不要求调用方 Close。Logger 始终是借用资源。
+`CloseIdleConnections` 只作用于组件创建的 Transport，借用 Transport 时为空操作；不取消正在执行的请求。HTTP 响应体统一由组件读取并关闭，返回值不要求调用方 Close。累计日志工厂及其日志后端始终由注入方管理，tkhttp 不关闭日志后端。
 
 共享池由调用方在合适的生命周期节点统一调用 `transport.CloseIdleConnections()`；单个 tkhttp Client 不清理其他使用方共享的空闲连接。该标准库方法只关闭当前空闲连接，Transport 后续仍可按需建立连接。
 
@@ -221,7 +258,7 @@ type Response struct {
 - 解码失败不重试，返回 `Response` 和错误。解码目标可能被标准库部分写入，调用方不得在错误时当作完整结果使用。
 - 尚未收到任何最终响应时返回 nil Response；如果此前失败响应后再次执行发生传输错误，也不把旧响应冒充为最终响应，历史结果保留在日志 `attempts` 中。
 
-提供 `ErrInvalidConfig`、`ErrInvalidRequest`、`ErrResponseTooLarge`、`ErrRequestHook` 等可供 `errors.Is` 判断的哨兵错误。`RequestError` 标识 `prepare`、`hook`、`transport`、`read`、`decode` 阶段，并通过 `Unwrap` 保留原始错误，支持 `errors.Is/AsType` 检查 context、网络和 JSON 错误。`StatusError` 保留状态码，但 Error 文本不包含响应正文。
+提供 `ErrInvalidConfig`、`ErrInvalidRequest`、`ErrResponseTooLarge`、`ErrRequestHook`、`ErrLogAccFactory` 等可供 `errors.Is` 判断的哨兵错误。`RequestError` 标识 `prepare`、`hook`、`transport`、`read`、`decode` 阶段，并通过 `Unwrap` 保留原始错误，支持 `errors.Is/AsType` 检查 context、网络和 JSON 错误。`StatusError` 保留状态码，但 Error 文本不包含响应正文。
 
 HTTP 状态错误与读取错误同时出现时，以读取错误为主，Response 仍保存状态码。错误的公开描述采用受控文本，日志使用阶段和错误分类，不直接打印底层可能包含完整 URL 的 `url.Error.Error()`。
 
@@ -270,18 +307,17 @@ type RequestHook func(ctx context.Context, info RequestInfo) (headers http.Heade
 
 `tkhttp` 不规定签名串拼接规则。平台组件根据协议选择方法、路径、query、Header 和固定 Body 字节，调用已有 `tksign` 完成签名；签名针对最终发送字节，不再重新序列化一次 JSON。
 
-钩子错误在本次逻辑调用中直接返回并纳入最终日志，不自动重试。钩子不拥有 Logger，也不自行打印一次成功或失败日志。
+钩子错误在本次逻辑调用中直接返回并纳入最终日志，不自动重试。钩子不拥有累计器或日志后端，也不自行打印一次成功或失败日志。
 
 ## LogAcc 累计与最终打印
 
-每次合法 `Do` 调用在入口记录起点，日志开启时创建独立累加器：
+每次 `Do` 调用在入口记录起点，日志开启时通过注入工厂获取独立的 `adapter.LogAcc`，校验非 nil 后累计字段：
 
 ```go
-acc := logx.NewLogAcc(
-	logx.WithLogger(logger),
-	logx.WithCost(start),
-)
+acc := logAccFactory(start)
 ```
+
+Config.DisableLog 为 true 时不调用工厂，也不输出 HTTP 日志。累计和打印仅操作接口，具体的字段锁、结构化编码和输出目标由实现提供。
 
 整个调用只在统一出口打印一次。初始化失败发生在 `New` 中，由调用方处理；不属于 HTTP 调用日志。调用过程不额外打印重试、签名或读响应日志。
 
@@ -289,7 +325,7 @@ acc := logx.NewLogAcc(
 
 ### 日志字段
 
-内置字段放入 `http`，业务字段放入 `biz`。不允许业务字段覆盖 `http`；ctx 的 traceId 等字段继续由既有 `logx` 配置提取。
+内置字段放入 `http`，业务字段放入 `biz`。不允许业务字段覆盖 `http`；ctx 的 traceId 等字段由注入实现按自身配置提取；采用 logx 工厂时继续复用其既有上下文字段配置。
 
 | 字段 | 含义 |
 | --- | --- |
@@ -307,11 +343,11 @@ acc := logx.NewLogAcc(
 | `http.retryStopReason` | 重试耗尽、方法不允许、超过等待上限或总预算不足等停止原因，未涉及时省略 |
 | `biz` | 调用方显式传入的非敏感业务字段 |
 
-`LogAcc` 的 `WithCost` 同时提供可读耗时前缀，`costMs` 用于结构化检索。成功最终打印 Info；HTTP 3xx/4xx 和主动取消打印 Warn；5xx、总超时、准备、钩子、传输、读取和解码错误打印 Error。此前发生重试但最终成功时仍打印一条 Info，失败尝试保留在数组中。
+logx 适配工厂通过其内部 `WithCost` 提供可读耗时前缀，其他实现可选择等价展示；`http.costMs` 始终由 tkhttp 累计，用于结构化检索。成功最终打印 Info；HTTP 3xx/4xx 和主动取消打印 Warn；5xx、总超时、准备、钩子、传输、读取和解码错误打印 Error。此前发生重试但最终成功时仍打印一条 Info，失败尝试保留在数组中。
 
 默认仅记录上述元数据，不记录 query 值、请求/响应正文、请求/响应 Header、Cookie、鉴权值和签名；首版不提供直接开启完整报文日志的开关。自定义日志字段显式传入，不自动反射请求对象。
 
-每个请求的累加器和 attempts 集合都独立，最终转成不会再修改的字段快照后输出。`LogAcc` 的锁只保护自身 map，不能被用来替代对嵌套切片/map 的所有权管理。内部使用 `LogAcc.Skip` 补偿固定打印层数，Do 与便捷入口分别校准，定位到业务调用处；请求中不派生新的 Logger 实例。
+每个请求的累加器和 attempts 集合都独立，最终转成不会再修改的字段快照后输出。接口实现应同步保护自身字段 map，tkhttp 仍负责嵌套切片/map 的独立快照，不把 map 的锁当作嵌套对象的同步措施。通过接口 Skip 补偿固定打印层数，logx 的适配层也计算在内；Do 与便捷入口分别校准到业务调用处。
 
 示例：第一次得到 503、第二次成功，只产生一条类似日志：
 
@@ -319,21 +355,21 @@ acc := logx.NewLogAcc(
 [INFO] {trace-123} caller/service.go:42 [96ms] HTTP 请求完成 {"biz":{"action":"queryDevice"},"http":{"method":"GET","url":"https://api.example.com/v1/devices","statusCode":200,"requestBytes":0,"responseBytes":128,"costMs":96,"attemptCount":2,"retryCount":1,"attempts":[{"attempt":1,"statusCode":503,"costMs":14,"errorKind":"httpStatus","retryWaitMs":64},{"attempt":2,"statusCode":200,"costMs":18,"errorKind":"","retryWaitMs":0}],"phase":"complete","errorKind":""}}
 ```
 
-取消后仍将合法的原 context 传给 `LogAcc`，保留 trace 信息。日志写入失败沿用 `logx` 的 stderr 诊断行为，不覆盖 HTTP 返回结果；进程崩溃、调用方 panic 和实际日志写入故障不属于“一次正常返回、一次输出调用”的保证。
+取消后仍将合法的原 context 传给 LogAcc 接口，保留 trace 信息。打印方法不返回错误，输出失败的诊断由实现负责；采用 logx 时沿用其 stderr 诊断，不覆盖 HTTP 返回结果。进程崩溃、调用方或注入实现 panic、无效工厂和实际日志写入故障不属于“一次正常返回、一次输出调用”的保证。
 
 ## 使用示例
 
 以下代码展示拟定用法，实际包尚未创建：
 
 ```go
-func fetchDevices(ctx context.Context, logger *logx.Logger) (result map[string]any, err error) {
+func fetchDevices(ctx context.Context, logAccFactory adapter.LogAccFactory) (result map[string]any, err error) {
 	client, err := tkhttp.New(
 		tkhttp.Config{
 			BaseURL: "https://api.example.com/v1/",
 			Timeout: 5 * time.Second,
 			Retry:   tkhttp.RetryPolicy{MaxAttempts: 3},
 		},
-		tkhttp.WithLogger(logger),
+		tkhttp.WithLogAccFactory(logAccFactory),
 	)
 	if err != nil {
 		return
@@ -349,19 +385,21 @@ func fetchDevices(ctx context.Context, logger *logx.Logger) (result map[string]a
 }
 ```
 
-示例将创建、调用和释放放在一个函数中便于阅读。实际服务在启动时创建并共享 Client，退出时清理自有空闲连接；每次调用只传入 context 和请求选项。
+调用方可先通过 `logx.NewLogAccFactory(logger)` 取得适配工厂，再传入上述函数；也可注入其他满足 adapter 契约的实现。示例将创建、调用和释放放在一个函数中便于阅读。实际服务在启动时创建并共享 Client，退出时清理自有空闲连接；每次调用只传入 context 和 RequestConfig。只需要 HTTP 而不记录日志时，可使用 `Config{BaseURL: baseURL, DisableLog: true}` 省略工厂。
 
 ## 文件组织与验证建议
 
-建议在 `toolkit/tkhttp/` 按 `client.go`、`config.go`、`options.go`、`request.go`、`response.go`、`retry.go`、`hook.go`、`log.go`、`error.go` 和 `README.md` 组织。config.go 负责基本参数、默认值和校验，options.go 仅负责可选依赖注入。仅供 tkhttp 使用的类型和辅助逻辑留在包内，`adapter/` 不增加单组件接口。
+建议在 `toolkit/tkhttp/` 按 `client.go`、`config.go`、`options.go`、`request.go`、`response.go`、`retry.go`、`hook.go`、`log.go`、`error.go` 和 `README.md` 组织。config.go 负责基本参数、默认值和校验，options.go 仅负责可选依赖注入。`adapter/log_acc.go` 声明 logx 与 tkhttp 实际共享的契约；`extension/logx/log_acc_adapter.go` 提供私有包装与公开工厂。仅供 tkhttp 使用的其他类型和辅助逻辑留在组件内部。
 
-实现后应检查成功、准备失败、超时取消、HTTP 状态错误、读取超限、解码失败和重试耗尽等路径；特别验证两次尝试最终只输出一条日志、并发请求字段隔离、签名字节与发送字节一致、敏感数据不进入日志，以及借用客户端和连接池的配置不被修改、借用池不被主动清理、Logger 不被关闭。
+实现后应检查成功、准备失败、超时取消、HTTP 状态错误、读取超限、解码失败和重试耗尽等路径；特别验证两次尝试最终只输出一条日志、并发请求字段隔离、签名字节与发送字节一致、敏感数据不进入日志，以及借用客户端和连接池的配置不被修改、借用池不被主动清理、注入的日志后端不被关闭。
 
 连接池验证还应覆盖：未注入时创建独立默认池；单 Client 多次请求和重试复用同一 Transport；多个 Client 注入同一池时保留实例身份和连接共享；WithTransport 与 WithHTTPClient 的组合顺序不改变优先级；注入客户端的 nil Transport 触发默认创建；显式 nil 和 typed nil 拒绝；组件仅清理自有池的空闲连接。实际连接复用通过本地 httptest 的连接状态或 httptrace 验证。
 
-配置验证还应覆盖：仅填写 BaseURL 时补齐合理默认值；BaseURL 缺失直接报错；非法时长、限额、Header 和重试策略在 New 中拒绝；RequestConfig 零值、超时继承/禁用、typed nil Result、JSON null 和互斥请求体的行为一致；nil context 返回参数错误且能完成错误日志；所有参数错误都不发起网络请求。
+配置验证还应覆盖：填写 BaseURL 并注入有效日志工厂时补齐合理默认值，关闭日志时可省略工厂；BaseURL 缺失直接报错；非法时长、限额、Header 和重试策略在 New 中拒绝；RequestConfig 零值、超时继承/禁用、typed nil Result、JSON null 和互斥请求体的行为一致；nil context 返回参数错误且能完成错误日志；所有参数错误都不发起网络请求。
 
-按全局工作流，新增测试需要另行获得用户允许。获准后仅采用 `httptest` 或自定义 RoundTripper，覆盖取消/等待、Retry-After、body 重放、URL 解析、资源关闭、日志数量和调用位置，并对 `tkhttp` 运行包级 race 与 vet 检查，不连接真实平台或运行整个仓库集成测试。本次仅修改设计文档，不编写或执行新增测试。
+日志契约验证还应覆盖：开启日志但缺失工厂、显式 nil 工厂在 New 中拒绝；工厂返回 nil/typed nil 在网络前报错；关闭日志不调用工厂；并发请求与重试的工厂调用次数正确，每个逻辑请求只创建一个累计器；注入非 logx 实现仍可累计和打印；logx 包装器满足接口、链式调用及源文件位置正确、旧 LogAcc API 保持兼容。包依赖应检查 tkhttp 的日志依赖只有 adapter，不导入 logx。
+
+按全局工作流，新增测试需要另行获得用户允许。获准后仅采用 `httptest` 或自定义 RoundTripper，覆盖取消/等待、Retry-After、body 重放、URL 解析、资源关闭、日志数量和调用位置，并对受影响的 `adapter`、`logx` 和 `tkhttp` 包运行 race 与 vet 检查，不连接真实平台或运行整个仓库集成测试。本次仅修改设计文档，不编写或执行新增测试。
 
 ## 参考
 
