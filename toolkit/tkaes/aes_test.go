@@ -121,13 +121,9 @@ func TestAesDecryptInvalidInput(t *testing.T) {
 				if err == nil || decoded != "" {
 					t.Fatalf("invalid input accepted: %q => %q, %v", input, decoded, err)
 				}
-				// 非法字符触发解码错误，空密文和短密文触发分组长度错误。
-				want := "invalid ciphertext length"
-				if input == "%%%" {
-					want = "invalid encrypted data"
-				}
-				if err.Error() != want {
-					t.Fatalf("want %q, got %v", want, err)
+				// 非法编码、空密文和短密文统一按无效密文类别判断。
+				if !errors.Is(err, ErrInvalidCiphertext) {
+					t.Fatalf("want ErrInvalidCiphertext, got %v", err)
 				}
 				t.Logf("输入=%q，解密结果=%q，预期错误=%v", input, decoded, err)
 			}
