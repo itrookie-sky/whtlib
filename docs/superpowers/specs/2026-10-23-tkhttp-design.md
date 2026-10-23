@@ -10,11 +10,12 @@
 
 ## 方案比较
 
-| 方案 | 收益 | 代价与结论 |
-| --- | --- | --- |
-| 标准库 `net/http` + 现有 `LogAcc` | 复用连接池、TLS、代理、context 和日志；无新增第三方依赖 | 需要自行组织请求配置和结果处理。推荐采用 |
-| 引入第三方 HTTP 客户端再包装 | 可直接获得部分便捷请求和重试能力 | 增加依赖，仍需统一请求行为与 `LogAcc` 日志；目前需求不足以支持该成本 |
-| 仅实现 `RoundTripper` 中间件 | 方便接入已有原生 HTTP 调用 | 无法覆盖调用方后续读取和解码失败，不适合承担整次调用的汇总日志 |
+
+| 方案                              | 收益                                                    | 代价与结论                                                           |
+| ----------------------------------- | --------------------------------------------------------- | ---------------------------------------------------------------------- |
+| 标准库 `net/http` + 现有 `LogAcc` | 复用连接池、TLS、代理、context 和日志；无新增第三方依赖 | 需要自行组织请求配置和结果处理。推荐采用                             |
+| 引入第三方 HTTP 客户端再包装      | 可直接获得部分便捷请求和重试能力                        | 增加依赖，仍需统一请求行为与 `LogAcc` 日志；目前需求不足以支持该成本 |
+| 仅实现 `RoundTripper` 中间件      | 方便接入已有原生 HTTP 调用                              | 无法覆盖调用方后续读取和解码失败，不适合承担整次调用的汇总日志       |
 
 采用第一种方案。沿用仓库已有的 `adapter/` 命名，在其中声明通用 `LogAcc` 接口，由 `logx` 提供适配实现，`tkhttp` 通过本包的 LogAccFactory 注入累计日志能力。现有 `adapter.Logger` 的普通参数采用正文拼接语义，保持其接口和字段类型不变，结构化累计由独立的 LogAcc 契约承担。
 
@@ -61,13 +62,14 @@ type Config struct {
 }
 ```
 
-| 字段 | 默认值与校验 |
-| --- | --- |
-| `BaseURL` | 无默认值，必填；必须是包含主机的 HTTP(S) 绝对 URL，不接受 userinfo、query 和 fragment |
-| `DefaultHeader` | nil 表示无默认请求头；非法字段名或值在 New 中返回配置错误 |
-| `Timeout` | 0 补齐 10 秒；正数按指定总时限执行；精确 -1 不添加组件超时，其他负数无效 |
-| `MaxResponseBytes` | 0 补齐 8 MiB；显式非零值必须为正数且加一不会溢出 |
-| `DisableLog` | false，启用每次调用的一条汇总日志；true 关闭 |
+
+| 字段               | 默认值与校验                                                                          |
+| -------------------- | --------------------------------------------------------------------------------------- |
+| `BaseURL`          | 无默认值，必填；必须是包含主机的 HTTP(S) 绝对 URL，不接受 userinfo、query 和 fragment |
+| `DefaultHeader`    | nil 表示无默认请求头；非法字段名或值在 New 中返回配置错误                             |
+| `Timeout`          | 0 补齐 10 秒；正数按指定总时限执行；精确 -1 不添加组件超时，其他负数无效              |
+| `MaxResponseBytes` | 0 补齐 8 MiB；显式非零值必须为正数且加一不会溢出                                      |
+| `DisableLog`       | false，启用每次调用的一条汇总日志；true 关闭                                          |
 
 `New` 统一复制配置、补齐默认值并验证所有参数。BaseURL 缺失、无效 URL、非法 Header、无效时长或限额等返回 `ErrInvalidConfig`，错误指出字段和原因，不猜测域名、不静默修正非法值。精确 -1 指原始 `time.Duration(-1)`，不是 `-time.Second`。默认值补齐后才选择和创建连接池，初始化失败不遗留自有资源。
 
@@ -75,12 +77,13 @@ Config 中不包含 Transport、HTTPClient、LogAccFactory 和 RequestHook 等�
 
 ### 可选依赖注入
 
-| 选项 | 行为 |
-| --- | --- |
-| `WithTransport(*http.Transport)` | 直接借用指定的标准库连接池；显式 nil 无效；优先于注入客户端的 Transport |
-| `WithHTTPClient(*http.Client)` | 借用 Transport、Jar 和 Timeout 等公开配置；显式 nil 无效；Transport 为 nil 且没有 WithTransport 时创建默认池 |
+
+| 选项                             | 行为                                                                                                         |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------------- |
+| `WithTransport(*http.Transport)` | 直接借用指定的标准库连接池；显式 nil 无效；优先于注入客户端的 Transport                                      |
+| `WithHTTPClient(*http.Client)`   | 借用 Transport、Jar 和 Timeout 等公开配置；显式 nil 无效；Transport 为 nil 且没有 WithTransport 时创建默认池 |
 | `WithLogAcc(LogAccFactory)` | 日志开启时必填；显式 nil 无效；每次调用创建新实例，后端生命周期由调用方管理 |
-| `WithRequestHook(RequestHook)` | 本次请求发送前生成签名或鉴权请求头；nil 表示未配置 |
+| `WithRequestHook(RequestHook)`   | 本次请求发送前生成签名或鉴权请求头；nil 表示未配置                                                           |
 
 忽略 nil 选项，同类注入以后一次为准。配置在构造期间固定，初始化后不提供配置修改方法。Config 默认容器在 New 中复制，依赖实例按后文的借用约定持有。
 
@@ -148,16 +151,17 @@ type RequestConfig struct {
 }
 ```
 
-| 字段 | 默认值与校验 |
-| --- | --- |
-| `Header` | nil 不覆盖；显式同名字段覆盖默认请求头，非法 Header 在发送前报错 |
-| `Query` | nil 不增加参数；同名键整体替换，保留多值 |
-| `JSON` | nil 表示未设置；设置时编码一次，默认 Content-Type 为 `application/json` |
-| `Form` | nil 表示未设置；非 nil 空集合也是显式表单体，默认 Content-Type 为 `application/x-www-form-urlencoded` |
-| `Body` | nil 表示未设置；非 nil 空切片也是显式字节体，不推测 Content-Type |
-| `Result` | nil 不解码；非指针或 typed nil 在发送前返回参数错误；只解码本次成功响应 |
-| `Timeout` | 0 继承 Client；正数覆盖；精确 -1 不添加组件超时，其他负数无效 |
-| `LogFields` | nil 无业务字段；设置时放入 `biz`，与内置 HTTP 字段隔离 |
+
+| 字段        | 默认值与校验                                                                                          |
+| ------------- | ------------------------------------------------------------------------------------------------------- |
+| `Header`    | nil 不覆盖；显式同名字段覆盖默认请求头，非法 Header 在发送前报错                                      |
+| `Query`     | nil 不增加参数；同名键整体替换，保留多值                                                              |
+| `JSON`      | nil 表示未设置；设置时编码一次，默认 Content-Type 为 `application/json`                               |
+| `Form`      | nil 表示未设置；非 nil 空集合也是显式表单体，默认 Content-Type 为 `application/x-www-form-urlencoded` |
+| `Body`      | nil 表示未设置；非 nil 空切片也是显式字节体，不推测 Content-Type                                      |
+| `Result`    | nil 不解码；非指针或 typed nil 在发送前返回参数错误；只解码本次成功响应                               |
+| `Timeout`   | 0 继承 Client；正数覆盖；精确 -1 不添加组件超时，其他负数无效                                         |
+| `LogFields` | nil 无业务字段；设置时放入 `biz`，与内置 HTTP 字段隔离                                                |
 
 不需要额外参数时直接省略 RequestConfig；也可显式传入 `RequestConfig{}`，效果相同。不再提供与其字段重复的请求 With 选项。JSON、Form、Body 三者互斥，同时设置多个请求体直接返回 `ErrInvalidRequest`。需要显式发送 JSON `null` 时使用 `JSON: json.RawMessage("null")`；typed nil 的 JSON 输入仍按标准库编码为 null。客户端和请求级 Header 对自动 Content-Type 的显式设置优先。
 
@@ -173,11 +177,12 @@ type RequestConfig struct {
 
 BaseURL 采用标准库 `url.URL.ResolveReference` 的语义：
 
-| BaseURL | target | 结果 |
-| --- | --- | --- |
-| `https://api.example.com/v1/` | `orders` | `https://api.example.com/v1/orders` |
-| `https://api.example.com/v1/` | `/orders` | `https://api.example.com/orders` |
-| `https://api.example.com/v1/` | `https://api.example.com/orders` | 使用同源绝对地址 |
+
+| BaseURL                       | target                           | 结果                                |
+| ------------------------------- | ---------------------------------- | ------------------------------------- |
+| `https://api.example.com/v1/` | `orders`                         | `https://api.example.com/v1/orders` |
+| `https://api.example.com/v1/` | `/orders`                        | `https://api.example.com/orders`    |
+| `https://api.example.com/v1/` | `https://api.example.com/orders` | 使用同源绝对地址                    |
 
 BaseURL 必须在 Config 中提供，不被当成路径字符串直接拼接，末尾 `/` 按标准库规则影响相对路径解析。target 可使用相对路径或同源绝对地址。拒绝 target 中的 userinfo、fragment 和 `//host/path` 形式；绝对 target 必须与 BaseURL 保持同源。按 scheme、大小写规范化的 hostname 和有效端口判断同源。
 
@@ -217,28 +222,30 @@ client, err := tkhttp.New(
 
 构造时按以下顺序确定最终 Transport；选项的书写顺序不改变这一级别，同类选项仍以后一次为准：
 
-| 输入 | 最终 Transport | 所有者 |
-| --- | --- | --- |
-| 提供 `WithTransport(pool)` | 使用 pool，即使同时提供 WithHTTPClient | 调用方 |
-| 仅提供 `WithHTTPClient(client)`，其 Transport 非 nil | 使用传入客户端的 Transport，支持原生 RoundTripper 扩展 | 调用方 |
-| 未提供上述 Transport，包括注入客户端的 Transport 为 nil | 创建独立的默认 `*http.Transport` | tkhttp Client |
+
+| 输入                                                    | 最终 Transport                                         | 所有者        |
+| --------------------------------------------------------- | -------------------------------------------------------- | --------------- |
+| 提供 `WithTransport(pool)`                              | 使用 pool，即使同时提供 WithHTTPClient                 | 调用方        |
+| 仅提供 `WithHTTPClient(client)`，其 Transport 非 nil    | 使用传入客户端的 Transport，支持原生 RoundTripper 扩展 | 调用方        |
+| 未提供上述 Transport，包括注入客户端的 Transport 为 nil | 创建独立的默认 `*http.Transport`                       | tkhttp Client |
 
 显式 `WithTransport(nil)`、`WithHTTPClient(nil)` 或最终选中的 typed nil RoundTripper 返回 `ErrInvalidConfig`。只有确定需要默认池时才创建；明确注入时不额外创建闲置池。
 
 默认池在 `New` 中创建一次，供该 Client 的所有请求复用；连接由 Transport 按请求需要建立。不同 Client 默认拥有不同的池，需要共享时显式注入同一实例。默认创建逻辑使用 `http.Transport`、`net.Dialer` 和标准库代理处理，参数以当前项目 Go 1.26.3 的标准默认配置为基线，与进程级 `http.DefaultTransport` 的替换相互独立：
 
-| 默认参数 | 值与含义 |
-| --- | --- |
-| `Proxy` | `http.ProxyFromEnvironment` |
-| `DialContext` | `net.Dialer`，拨号 Timeout 30s、TCP KeepAlive 30s |
-| `ForceAttemptHTTP2` | true，尝试协商 HTTP/2 |
-| `MaxIdleConns` | 100，所有主机的空闲连接总上限 |
-| `MaxIdleConnsPerHost` | 0，沿用标准库 `DefaultMaxIdleConnsPerHost`，当前为 2 |
-| `MaxConnsPerHost` | 0，沿用标准库不限制单主机连接总数的语义 |
-| `IdleConnTimeout` | 90s |
-| `TLSHandshakeTimeout` | 10s |
-| `ExpectContinueTimeout` | 1s |
-| `DisableKeepAlives` | false，启用连接复用 |
+
+| 默认参数                | 值与含义                                             |
+| ------------------------- | ------------------------------------------------------ |
+| `Proxy`                 | `http.ProxyFromEnvironment`                          |
+| `DialContext`           | `net.Dialer`，拨号 Timeout 30s、TCP KeepAlive 30s    |
+| `ForceAttemptHTTP2`     | true，尝试协商 HTTP/2                                |
+| `MaxIdleConns`          | 100，所有主机的空闲连接总上限                        |
+| `MaxIdleConnsPerHost`   | 0，沿用标准库 `DefaultMaxIdleConnsPerHost`，当前为 2 |
+| `MaxConnsPerHost`       | 0，沿用标准库不限制单主机连接总数的语义              |
+| `IdleConnTimeout`       | 90s                                                  |
+| `TLSHandshakeTimeout`   | 10s                                                  |
+| `ExpectContinueTimeout` | 1s                                                   |
+| `DisableKeepAlives`     | false，启用连接复用                                  |
 
 空闲连接上限与连接总数分别由标准库对应字段控制。`MaxConnsPerHost` 限制连接数量，不等于业务请求并发数，HTTP/2 可在同一连接上复用多个请求。调用方需要定制时配置标准 Transport 后注入，不再额外定义同义的连接池配置类型。
 
@@ -322,17 +329,18 @@ Config.DisableLog 为 true 时不调用工厂，也不输出 HTTP 日志。累�
 
 内置字段放入 `http`，业务字段放入 `biz`。不允许业务字段覆盖 `http`；ctx 的 traceId 等字段由注入实现按自身配置提取；采用 logx 适配实例时继续复用其既有上下文字段配置。
 
-| 字段 | 含义 |
-| --- | --- |
-| `http.method` | 请求方法 |
-| `http.url` | 仅包含 scheme、host、path；参数校验前为空，不包含 userinfo、query、fragment |
-| `http.statusCode` | 本次响应状态码，未收到响应时为 0 |
-| `http.requestBytes` | 编码后的固定请求体长度 |
-| `http.responseBytes` | 本次响应实际读取字节数，检测超限时可达到限额加一 |
-| `http.costMs` | 整次调用总耗时，包含准备、签名、请求、读取和解码 |
-| `http.phase` | 最终结束阶段：prepare、hook、transport、read、status、decode、complete |
-| `http.errorKind` | 最终错误分类，无错误时为空；不包含原始请求/响应数据 |
-| `biz` | 调用方显式传入的非敏感业务字段 |
+
+| 字段                 | 含义                                                                        |
+| ---------------------- | ----------------------------------------------------------------------------- |
+| `http.method`        | 请求方法                                                                    |
+| `http.url`           | 仅包含 scheme、host、path；参数校验前为空，不包含 userinfo、query、fragment |
+| `http.statusCode`    | 本次响应状态码，未收到响应时为 0                                            |
+| `http.requestBytes`  | 编码后的固定请求体长度                                                      |
+| `http.responseBytes` | 本次响应实际读取字节数，检测超限时可达到限额加一                            |
+| `http.costMs`        | 整次调用总耗时，包含准备、签名、请求、读取和解码                            |
+| `http.phase`         | 最终结束阶段：prepare、hook、transport、read、status、decode、complete      |
+| `http.errorKind`     | 最终错误分类，无错误时为空；不包含原始请求/响应数据                         |
+| `biz`                | 调用方显式传入的非敏感业务字段                                              |
 
 logx 适配实现通过当前起点提供可读耗时前缀，起点可在构造时传入或通过 SetStartTime 修改；其他实现可选择等价展示；`http.costMs` 始终由 tkhttp 累计，用于结构化检索。成功最终打印 Info；HTTP 3xx/4xx 和主动取消打印 Warn；5xx、总超时、准备、钩子、传输、读取和解码错误打印 Error。
 
