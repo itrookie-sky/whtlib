@@ -3,7 +3,6 @@ package tkredis
 import (
 	"encoding"
 	"encoding/json"
-	"fmt"
 	"reflect"
 	"slices"
 
@@ -29,7 +28,7 @@ func explicitArgs(args []any) (converted []any, err error) {
 		}
 		converted[i], err = json.Marshal(value.Value)
 		if err != nil {
-			err = fmt.Errorf("tkredis: JSON argument %d: %w", i, err)
+			err = argumentEncodingError(i, err)
 			return
 		}
 	}
@@ -40,7 +39,7 @@ func explicitArgs(args []any) (converted []any, err error) {
 // 支持 encoding.BinaryMarshaler 的参数保持原生编码；不会修改调用方切片。
 func EncodeArgs(start int, args ...any) (converted []any, err error) {
 	if start < 0 || start > len(args) {
-		err = fmt.Errorf("tkredis: argument start index out of range")
+		err = invalidArgument("argument start index out of range")
 		return
 	}
 	converted, err = explicitArgs(args)
@@ -59,7 +58,7 @@ func EncodeArgs(start int, args ...any) (converted []any, err error) {
 		case reflect.Struct, reflect.Map, reflect.Slice, reflect.Array:
 			converted[i], err = json.Marshal(arg)
 			if err != nil {
-				err = fmt.Errorf("tkredis: JSON argument %d: %w", i, err)
+				err = argumentEncodingError(i, err)
 				return
 			}
 		}

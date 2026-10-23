@@ -6,7 +6,6 @@ import (
 	"crypto/cipher"
 	"encoding/base64"
 	"encoding/hex"
-	"errors"
 )
 
 const (
@@ -47,11 +46,11 @@ func WithEncodingType(encodingType string) AesOptionFunc {
 }
 
 // EncryptData 加密数据并返回Base64编码字符串
-func (a *AesUtils) EncryptData(rawData string) (string, error) {
+func (a *AesUtils) EncryptData(rawData string) (encryptData string, err error) {
 	// 创建加密块
 	block, err := aes.NewCipher(a.key)
 	if err != nil {
-		return "", errors.New("invalid AES key")
+		return "", err
 	}
 
 	// 填充原始数据
@@ -72,11 +71,8 @@ func (a *AesUtils) EncryptData(rawData string) (string, error) {
 }
 
 // DecryptData 解密Base64编码的加密数据
-func (a *AesUtils) DecryptData(encryptData string) (string, error) {
-	var (
-		ciphertext []byte
-		err        error
-	)
+func (a *AesUtils) DecryptData(encryptData string) (rawData string, err error) {
+	var ciphertext []byte
 	// 解码类型
 	switch a.encodingType {
 	case EncodingTypebase16:
@@ -85,13 +81,13 @@ func (a *AesUtils) DecryptData(encryptData string) (string, error) {
 		ciphertext, err = base64.StdEncoding.DecodeString(encryptData)
 	}
 	if err != nil {
-		return "", errors.New("invalid encrypted data")
+		return "", invalidCiphertext("invalid encrypted data", err)
 	}
 
 	// 创建解密块
 	block, err := aes.NewCipher(a.key)
 	if err != nil {
-		return "", errors.New("invalid AES key")
+		return "", err
 	}
 	err = validateCiphertext(ciphertext, block.BlockSize())
 	if err != nil {
@@ -119,7 +115,6 @@ func (a *AesUtils) EncryptDataRawURL(rawData string) (encryptData string, err er
 	var block cipher.Block
 	block, err = aes.NewCipher(a.key)
 	if err != nil {
-		err = errors.New("invalid AES key")
 		return
 	}
 
@@ -143,13 +138,12 @@ func (a *AesUtils) DecryptDataRawURL(encryptData string) (rawData string, err er
 	)
 	ciphertext, err = base64.RawURLEncoding.DecodeString(encryptData)
 	if err != nil {
-		err = errors.New("invalid encrypted data")
+		err = invalidCiphertext("invalid encrypted data", err)
 		return
 	}
 
 	block, err = aes.NewCipher(a.key)
 	if err != nil {
-		err = errors.New("invalid AES key")
 		return
 	}
 	err = validateCiphertext(ciphertext, block.BlockSize())
@@ -175,7 +169,7 @@ func (a *AesUtils) DecryptDataRawURL(encryptData string) (rawData string, err er
 // validateCiphertext 校验密文是否满足 AES 分组长度要求
 func validateCiphertext(ciphertext []byte, blockSize int) (err error) {
 	if len(ciphertext) == 0 || len(ciphertext)%blockSize != 0 {
-		err = errors.New("invalid ciphertext length")
+		err = invalidCiphertext("invalid ciphertext length", nil)
 		return
 	}
 	return
@@ -189,15 +183,15 @@ func pkcs5Pad(data []byte, blockSize int) []byte {
 }
 
 // pkcs5Unpad PKCS5去除填充
-func pkcs5Unpad(data []byte) ([]byte, error) {
+func pkcs5Unpad(data []byte) (unpadded []byte, err error) {
 	length := len(data)
 	if length == 0 {
-		return nil, errors.New("invalid data length")
+		return nil, invalidPadding("invalid data length")
 	}
 
 	unpadding := int(data[length-1])
 	if unpadding > length {
-		return nil, errors.New("invalid padding size")
+		return nil, invalidPadding("invalid padding size")
 	}
 
 	return data[:(length - unpadding)], nil

@@ -118,6 +118,23 @@ topic 为 `<Env>_<topic>`，消费组为 `<ConsumerEnv>_group_<name>`。未配�
 
 `WithLogger` 可选注入 `adapter.Logger`；不创建全局日志，不主动输出消息正文或认证配置。`Errors()` 是容量为 128 的非阻塞诊断流，满时丢弃新诊断，全部任务退出后关闭；可靠结果应从 delivery 通道和 `Subscription.Wait` 获取。
 
+## 错误处理
+
+包级错误和包装助手集中在 [error.go](error.go)，使用 errors.Is 匹配类别，使用 errors.AsType 获取原始 Kafka/JSON 错误。既有 ErrClosed、ErrDisabled、ErrExcluded、ErrAlreadySubscribed、ErrUndelivered 保持原有语义。
+
+| 错误 | 含义 |
+| --- | --- |
+| ErrInvalidConfig | 配置或注入依赖无效 |
+| ErrInvalidArgument | 消息、handler 或消费组参数无效 |
+| ErrTopicNotConfigured | 请求的 topic 未配置 |
+| ErrEncode | 消息编码失败，包含自定义 Encoder |
+| ErrDelivery | Send 排队或最终 delivery 结果失败 |
+| ErrCommit | 消费位点提交失败 |
+| ErrHandler | 消费回调执行失败 |
+| ErrHandlerPanic | 消费回调 panic，同时匹配 ErrHandler |
+
+编码、投递、位点提交和处理失败均保留底层原因。panic 值本身为 error 时也保留错误链；context 取消和超时继续复用标准库错误。原生诊断事件仍可通过 Kafka 错误类型及错误码判断。
+
 ## 验证边界
 
 模块测试使用内部 fake 驱动，不连接真实 Kafka，覆盖配置克隆、编码与分区、排队及最终确认、重试耗尽不提交、多分区确认、取消与资源清理。构建保留 Kafka 驱动的 CGO 和目标平台原生依赖要求。

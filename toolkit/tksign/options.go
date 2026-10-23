@@ -4,7 +4,6 @@ package tksign
 import (
 	"bytes"
 	"crypto"
-	"errors"
 )
 
 // Encoding 表示字符串入口使用的签名编码。
@@ -14,19 +13,6 @@ const (
 	EncodingBase64    Encoding = "base64"
 	EncodingBase64URL Encoding = "base64url"
 	EncodingHex       Encoding = "hex"
-)
-
-var (
-	// ErrInvalidKey 表示密钥缺失、格式无效或密钥类型不受支持。
-	ErrInvalidKey = errors.New("tksign: invalid key")
-	// ErrMissingPrivateKey 表示当前实例不具备签名私钥。
-	ErrMissingPrivateKey = errors.New("tksign: missing private key")
-	// ErrMissingPublicKey 表示当前实例不具备验签公钥。
-	ErrMissingPublicKey = errors.New("tksign: missing public key")
-	// ErrUnsupportedOption 表示编码、摘要或算法选项不适用于当前密钥。
-	ErrUnsupportedOption = errors.New("tksign: unsupported option")
-	// ErrVerification 表示签名编码无效或签名与消息、公钥不匹配。
-	ErrVerification = errors.New("tksign: signature verification failed")
 )
 
 // options 保存构造阶段的密钥内容与选项，供 New 统一校验和解析。

@@ -2,7 +2,6 @@ package tkkafka
 
 import (
 	"encoding/json"
-	"fmt"
 )
 
 // Encoder 显式定义生产消息的编码协议；实现必须支持并发调用。
@@ -15,7 +14,8 @@ type EncoderFunc func(value any) (data []byte, err error)
 
 // Encode 调用编码函数。
 func (f EncoderFunc) Encode(value any) (data []byte, err error) {
-	return f(value)
+	data, err = f(value)
+	return data, operationError(ErrEncode, err)
 }
 
 // JSONEncoder 使用标准库 JSON，不删除或改写业务字段。
@@ -23,7 +23,8 @@ type JSONEncoder struct{}
 
 // Encode 将原始数据编码为 JSON。
 func (JSONEncoder) Encode(value any) (data []byte, err error) {
-	return json.Marshal(value)
+	data, err = json.Marshal(value)
+	return data, operationError(ErrEncode, err)
 }
 
 // LegacyEncoder 显式过滤旧协议的六个顶层数据库时间字段。
@@ -34,17 +35,18 @@ type LegacyEncoder struct{}
 func (LegacyEncoder) Encode(value any) (data []byte, err error) {
 	data, err = json.Marshal(value)
 	if err != nil {
+		err = operationError(ErrEncode, err)
 		return
 	}
 	var object map[string]json.RawMessage
 	err = json.Unmarshal(data, &object)
 	if err != nil {
-		err = fmt.Errorf("tkkafka: legacy encoder requires a JSON object: %w", err)
+		err = legacyEncodingError(err)
 		return
 	}
 	for _, field := range []string{"created_at", "updated_at", "deleted_at", "create_time", "update_time", "delete_time"} {
 		delete(object, field)
 	}
 	data, err = json.Marshal(object)
-	return
+	return data, operationError(ErrEncode, err)
 }

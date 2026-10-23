@@ -24,4 +24,6 @@ err := reflectx.SetFieldValue(field, int32(123))
 
 `SetFieldValue` 的错误可通过 `errors.Is` 匹配 `ErrNotSettable`、`ErrNotConvertible`。nil 只可赋给允许 nil 的字段；长度不足的切片转数组返回错误。数值转换遵循 Go 转换规则，不额外检查截断或溢出。
 
+错误声明及转换错误包装助手集中维护在 [error.go](error.go)，保留原有错误标识与匹配语义。
+
 迁移修正：`OriginTypeAndKind` 对无效值返回零结果；`IsNil(reflect.Value{})` 返回 true；字段赋值对 nil、不可写字段和不合法动态转换返回错误。可直接 Interface 的值保留原类型；不可直接访问的数值按反射访问方法返回 int64、uint64、float64 或 complex128，不使用 unsafe 绕过访问限制。

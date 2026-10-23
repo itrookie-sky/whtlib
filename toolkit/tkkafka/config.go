@@ -3,7 +3,6 @@ package tkkafka
 
 import (
 	"cmp"
-	"fmt"
 	"maps"
 	"math"
 	"slices"
@@ -111,18 +110,18 @@ func normalizeConfig(cfg *Config) (out Config, err error) {
 		out.MessageMaxBytes = 16384
 	}
 	if out.RetryDelay < 0 || out.RetryMaxCount < 0 || out.BatchInterval < 0 || out.BatchSize < 0 || out.BufferMemory < 0 {
-		err = fmt.Errorf("tkkafka: invalid negative retry, batch or buffer configuration")
+		err = invalidConfig("invalid negative retry, batch or buffer configuration")
 		return
 	}
 	for topic, topicCfg := range out.TopicConfig {
 		if topic == "" || topicCfg.Mode < ModeNone || topicCfg.Mode > ModeBoth || topicCfg.PartitionNum > math.MaxInt32 {
-			err = fmt.Errorf("tkkafka: invalid topic configuration for %q", topic)
+			err = invalidConfig("invalid topic configuration for %q", topic)
 			return
 		}
 		seen := make(map[string]bool, len(topicCfg.Groups))
 		for _, group := range topicCfg.Groups {
 			if group == "" || seen[group] {
-				err = fmt.Errorf("tkkafka: empty or duplicate group for topic %q", topic)
+				err = invalidConfig("empty or duplicate group for topic %q", topic)
 				return
 			}
 			seen[group] = true

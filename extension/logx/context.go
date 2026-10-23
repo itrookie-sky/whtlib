@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"reflect"
 )
 
@@ -31,7 +30,7 @@ func encodeFields(fields []jsonField) (data []byte, err error) {
 			value, encodeErr = json.Marshal(field.value)
 		}
 		if encodeErr != nil {
-			err = errors.Join(err, fmt.Errorf("logx: encode %q: %w", field.name, encodeErr))
+			err = errors.Join(err, fieldEncodingError(field.name, encodeErr))
 			if !isObject {
 				value = []byte(`"[json encode error]"`)
 			}
@@ -76,7 +75,7 @@ func contextTrace(ctx context.Context, config Config) (data []byte, err error) {
 	}
 	value, err := json.Marshal(fields[0].value)
 	if err != nil {
-		return []byte("{[json encode error]}"), fmt.Errorf("logx: encode traceId: %w", err)
+		return []byte("{[json encode error]}"), traceEncodingError(err)
 	}
 	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
 		value = value[1 : len(value)-1]

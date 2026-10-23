@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"maps"
 	"os"
 	"path/filepath"
@@ -31,7 +30,7 @@ type fileStore struct {
 
 func newFileStore(path string) (store *fileStore, err error) {
 	if path == "" {
-		err = fmt.Errorf("%w: snapshot path is empty", ErrInvalidConfig)
+		err = invalidConfig("snapshot path is empty")
 		return
 	}
 	path, err = filepath.Abs(path)
@@ -54,7 +53,7 @@ func newFileStore(path string) (store *fileStore, err error) {
 	}
 	if !info.Mode().IsRegular() {
 		store = nil
-		err = fmt.Errorf("%w: snapshot must be a regular file", ErrInvalidConfig)
+		err = invalidConfig("snapshot must be a regular file")
 		return
 	}
 	data, readErr := os.ReadFile(path)
@@ -67,7 +66,7 @@ func newFileStore(path string) (store *fileStore, err error) {
 	err = json.Unmarshal(data, &snapshot)
 	if err != nil || snapshot.Version != 1 || snapshot.Entries == nil {
 		store = nil
-		err = fmt.Errorf("%w: unsupported cache snapshot", ErrInvalidConfig)
+		err = invalidConfig("unsupported cache snapshot")
 		return
 	}
 	err = os.Chmod(path, 0600)

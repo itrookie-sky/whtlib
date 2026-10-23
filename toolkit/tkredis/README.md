@@ -111,6 +111,12 @@ defer lock.Unlock(context.Background())
 
 这些是明确的 API 迁移，不是只替换 import 即可的兼容层；原 GF 字段类型没有被偷偷改写。
 
+## 错误处理
+
+错误集中声明在 [error.go](error.go)。参数校验及 JSON 参数编码失败匹配 `ErrInvalidArgument`，响应结构或类型异常匹配 `ErrUnexpectedResponse`。编码失败保留底层 JSON 错误，可用 errors.AsType 获取具体原因。
+
+既有 `ErrClosed`、`ErrInvalidClient`、`ErrInvalidCommand`、`ErrInvalidTTL`、`ErrScriptNotFound`、`ErrLockHeld`、`ErrLockLost` 保持原有语义，均可通过 errors.Is 判断。Redis 命令仍保留 `redis.Nil`、服务端错误和 context 错误，不将其重新解释为包级参数错误。
+
 ## 验证
 
 本包测试仅使用进程内 `miniredis`，不连接真实 Redis、MySQL 或 Kafka。覆盖命令 nil/空值、显式 JSON 与原始切片保护、管道部分失败、Lua 重载和并发注册、原子占位、集合 TTL 和分页、锁 owner 校验/续期/取消/重复获取以及客户端所有权。

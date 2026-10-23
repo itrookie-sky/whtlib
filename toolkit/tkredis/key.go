@@ -2,7 +2,6 @@ package tkredis
 
 import (
 	"context"
-	"errors"
 	"strings"
 
 	"github.com/redis/go-redis/v9"
@@ -16,7 +15,7 @@ func (c *Client) DeletePrefix(ctx context.Context, prefix string) (err error) {
 		return
 	}
 	if prefix == "" {
-		return errors.New("tkredis: key prefix is empty")
+		return invalidArgument("key prefix is empty")
 	}
 	ctx = nonNilContext(ctx)
 	if cluster, ok := c.native.(*redis.ClusterClient); ok {

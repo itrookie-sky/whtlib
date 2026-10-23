@@ -1,7 +1,6 @@
 package logx
 
 import (
-	"fmt"
 	"regexp"
 	"strings"
 	"time"
@@ -30,14 +29,14 @@ func compileFilePattern(name string) (pattern *filePattern, err error) {
 		switch char {
 		case '{':
 			if inside {
-				return nil, fmt.Errorf("logx: nested filename expression")
+				return nil, invalidConfig("nested filename expression")
 			}
 			inside = true
 			tokens = 0
 			continue
 		case '}':
 			if !inside || tokens == 0 {
-				return nil, fmt.Errorf("logx: invalid filename expression")
+				return nil, invalidConfig("invalid filename expression")
 			}
 			inside = false
 			continue
@@ -56,7 +55,7 @@ func compileFilePattern(name string) (pattern *filePattern, err error) {
 				expression.WriteString(`(?:0[1-9]|[12][0-9]|3[01])`)
 			case '-', '_', '.':
 			default:
-				return nil, fmt.Errorf("logx: unsupported filename placeholder %q", char)
+				return nil, invalidConfig("unsupported filename placeholder %q", char)
 			}
 			if width > 0 {
 				pattern.parts = append(pattern.parts, filePart{token: byte(char)})
@@ -73,7 +72,7 @@ func compileFilePattern(name string) (pattern *filePattern, err error) {
 		expression.WriteString(regexp.QuoteMeta(string(char)))
 	}
 	if inside {
-		return nil, fmt.Errorf("logx: unclosed filename expression")
+		return nil, invalidConfig("unclosed filename expression")
 	}
 	expression.WriteByte('$')
 	pattern.matcher, err = regexp.Compile(expression.String())

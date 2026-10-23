@@ -88,6 +88,8 @@ Namespace 必填，只允许 ASCII 字母、数字、下划线和连字符；逻
 
 所有数据操作要求非 nil ctx。关闭后返回 `ErrClosed`；配置及参数错误分别通过 `errors.Is` 匹配 `ErrInvalidConfig`、`ErrInvalidArgument`。Redis 故障不会当作普通未命中；网络错误或取消也不保证已发送的命令未执行。
 
+错误声明和包装助手集中在 [error.go](error.go)。JSON 命中内容解码失败（包括尾随多份 JSON）匹配 `ErrDecode`，原始 JSON/I/O 错误仍可通过 errors.Is/AsType 判断；found 保持 true。回源 panic 值为 error 时，ErrLoaderPanic 同时保留该原始原因。
+
 ## 回源和 MySQL 一致性
 
 同一次回源由首个调用者决定 loader、ctx、TTL 和选项。等待者可独立取消，首个调用者取消则终止本轮共享回源。loader 在缓存锁外执行，应将收到的 ctx 传给数据库，不能递归等待同实例同 key 的回源。

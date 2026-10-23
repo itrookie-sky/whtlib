@@ -11,7 +11,6 @@ import (
 	"crypto/sha512"
 	"encoding/base64"
 	"encoding/hex"
-	"fmt"
 )
 
 // Signer 保存已解析的密钥和固定算法，初始化后可并发使用。
@@ -34,24 +33,24 @@ func New(opts ...Option) (signer *Signer, err error) {
 		}
 	}
 	if !config.privateSet && !config.publicSet {
-		err = fmt.Errorf("%w: at least one key is required", ErrInvalidKey)
+		err = invalidKey("at least one key is required")
 		return
 	}
 	switch config.encoding {
 	case EncodingBase64, EncodingBase64URL, EncodingHex:
 	default:
-		err = fmt.Errorf("%w: signature encoding", ErrUnsupportedOption)
+		err = unsupportedOption("signature encoding")
 		return
 	}
 	if config.hashSet && config.hash != crypto.SHA256 && config.hash != crypto.SHA384 && config.hash != crypto.SHA512 {
-		err = fmt.Errorf("%w: hash must be SHA-256, SHA-384 or SHA-512", ErrUnsupportedOption)
+		err = unsupportedOption("hash must be SHA-256, SHA-384 or SHA-512")
 		return
 	}
 	instance := &Signer{encoding: config.encoding, rsaPSS: config.rsaPSS}
 	if config.privateSet {
 		instance.privateKey, err = parsePrivateKey(config.privateKey, config.privateDER)
 		if err != nil {
-			err = fmt.Errorf("private key: %w", err)
+			err = keyContextError("private", err)
 			return
 		}
 		instance.signHash, err = keyHash(instance.privateKey.Public(), config.hash, config.hashSet)
@@ -62,7 +61,7 @@ func New(opts ...Option) (signer *Signer, err error) {
 	if config.publicSet {
 		instance.publicKey, err = parsePublicKey(config.publicKey, config.publicDER)
 		if err != nil {
-			err = fmt.Errorf("public key: %w", err)
+			err = keyContextError("public", err)
 			return
 		}
 	}
@@ -80,7 +79,7 @@ func New(opts ...Option) (signer *Signer, err error) {
 			_, privateRSA = instance.privateKey.(*rsa.PrivateKey)
 		}
 		if !publicRSA && !privateRSA {
-			err = fmt.Errorf("%w: RSA-PSS requires an RSA key", ErrUnsupportedOption)
+			err = unsupportedOption("RSA-PSS requires an RSA key")
 			return
 		}
 	}
@@ -110,7 +109,7 @@ func keyHash(key crypto.PublicKey, requested crypto.Hash, explicit bool) (hash c
 			return 0, ErrInvalidKey
 		}
 		if explicit {
-			return 0, fmt.Errorf("%w: Ed25519 signs the original message", ErrUnsupportedOption)
+			return 0, unsupportedOption("Ed25519 signs the original message")
 		}
 		return 0, nil
 	default:
@@ -133,7 +132,7 @@ func (s *Signer) Sign(data []byte) (signature []byte, err error) {
 	}
 	signature, err = s.privateKey.Sign(rand.Reader, messageDigest(data, s.signHash), opts)
 	if err != nil {
-		err = fmt.Errorf("tksign: signing failed: %w", err)
+		err = signingError(err)
 	}
 	return
 }
@@ -164,7 +163,7 @@ func (s *Signer) Verify(data, signature []byte) (err error) {
 		return ErrInvalidKey
 	}
 	if err != nil {
-		err = ErrVerification
+		err = verificationError(err)
 	}
 	return
 }
@@ -216,7 +215,7 @@ func (s *Signer) VerifyString(data, signature string) (err error) {
 		raw, err = hex.DecodeString(signature)
 	}
 	if err != nil {
-		return ErrVerification
+		return verificationError(err)
 	}
 	return s.Verify([]byte(data), raw)
 }

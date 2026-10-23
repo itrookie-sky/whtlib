@@ -3,7 +3,6 @@ package tkcache
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"time"
 )
 
@@ -90,7 +89,7 @@ func (c *Cache) runLoad(f *flight, ttl time.Duration, loader Loader, options loa
 	defer func() {
 		recovered := recover()
 		if recovered != nil {
-			c.finish(f, nil, fmt.Errorf("%w: %v", ErrLoaderPanic, recovered))
+			c.finish(f, nil, loaderPanic(recovered))
 		}
 	}()
 	value, found, err := c.Get(f.ctx, f.key)

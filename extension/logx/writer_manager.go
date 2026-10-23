@@ -1,7 +1,6 @@
 package logx
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"sync"
@@ -64,7 +63,7 @@ func (m *fileManager) acquire(config FileConfig, previous *fileLease) (lease *fi
 			own := previous != nil && previous.entry == entry
 			if !same && (!own || len(entry.leases) != 1) {
 				m.mu.Unlock()
-				return nil, resolved, fmt.Errorf("logx: conflicting rotation policy for shared file %q", key)
+				return nil, resolved, fileConflict("conflicting rotation policy for shared file %q", key)
 			}
 			if !same {
 				internal := resolved
@@ -92,7 +91,7 @@ func (m *fileManager) acquire(config FileConfig, previous *fileLease) (lease *fi
 			}
 			if pattern.overlaps(active.writer.pattern) {
 				m.mu.Unlock()
-				return nil, resolved, fmt.Errorf("logx: overlapping filename expressions %q and %q", resolved.File, active.config.File)
+				return nil, resolved, fileConflict("overlapping filename expressions %q and %q", resolved.File, active.config.File)
 			}
 		}
 		// 硬链接和其他别名也不能绕过全局管理器。
@@ -107,7 +106,7 @@ func (m *fileManager) acquire(config FileConfig, previous *fileLease) (lease *fi
 				active.writer.mu.Unlock()
 				if activeInfo != nil && activeErr == nil && os.SameFile(info, activeInfo) {
 					m.mu.Unlock()
-					return nil, resolved, fmt.Errorf("logx: file alias %q is already managed as %q", concretePath, active.key)
+					return nil, resolved, fileConflict("file alias %q is already managed as %q", concretePath, active.key)
 				}
 			}
 		}

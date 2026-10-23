@@ -30,13 +30,7 @@ const (
 	TTLNotFound time.Duration = tkredis.TTLNotFound
 )
 
-var (
-	ErrClosed          = errors.New("tkcache: closed")
-	ErrInvalidArgument = errors.New("tkcache: invalid argument")
-	ErrInvalidConfig   = errors.New("tkcache: invalid config")
-	ErrLoaderPanic     = errors.New("tkcache: loader panic")
-	namespacePattern   = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
-)
+var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // Config 配置独立缓存，RedisClient 始终由调用方管理。
 // FilePath 仅用于 FileStore，一个文件只能由一个活动 Cache 实例持有。
@@ -143,7 +137,7 @@ func New(config Config) (cache *Cache, err error) {
 func normalizeTTL(ttl time.Duration) (result time.Duration, err error) {
 	result, err = tkredis.NormalizeTTL(ttl)
 	if err != nil {
-		return 0, ErrInvalidArgument
+		return 0, invalidArgumentError(err)
 	}
 	return
 }

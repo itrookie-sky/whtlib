@@ -3,7 +3,6 @@ package tkkafka
 import (
 	"bytes"
 	"context"
-	"fmt"
 	"hash/fnv"
 	"slices"
 
@@ -68,7 +67,7 @@ func (c *KafkaClient) ensureProducerLocked(topic string) (producer producerDrive
 		return
 	}
 	if producer == nil {
-		err = fmt.Errorf("tkkafka: producer factory returned nil")
+		err = invalidConfig("producer factory returned nil")
 		return
 	}
 	if c.closed.Load() {
@@ -108,7 +107,7 @@ func (c *KafkaClient) Send(ctx context.Context, topic string, message *ProducerM
 		return
 	}
 	if message == nil {
-		err = fmt.Errorf("tkkafka: nil producer message")
+		err = invalidArgument("nil producer message")
 		return
 	}
 	cfg, err := c.topicConfig(topic)
@@ -125,6 +124,7 @@ func (c *KafkaClient) Send(ctx context.Context, topic string, message *ProducerM
 	}
 	data, err := c.options.encoder.Encode(message.Data)
 	if err != nil {
+		err = operationError(ErrEncode, err)
 		return
 	}
 	record := &kafka.Message{
@@ -145,6 +145,7 @@ func (c *KafkaClient) Send(ctx context.Context, topic string, message *ProducerM
 	events := make(chan kafka.Event, 1)
 	err = producer.Produce(record, events)
 	if err != nil {
+		err = operationError(ErrDelivery, err)
 		return
 	}
 	results := make(chan DeliveryResult, 1)
@@ -184,11 +185,11 @@ func (c *KafkaClient) awaitDelivery(events <-chan kafka.Event) (result DeliveryR
 func deliveryResult(event kafka.Event) (result DeliveryResult) {
 	message, ok := event.(*kafka.Message)
 	if !ok || message == nil {
-		result.Err = fmt.Errorf("tkkafka: unexpected delivery event %T", event)
+		result.Err = unexpectedDelivery(event)
 		return
 	}
 	result.Message = message
-	result.Err = message.TopicPartition.Error
+	result.Err = operationError(ErrDelivery, message.TopicPartition.Error)
 	return
 }
 

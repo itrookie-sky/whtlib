@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"context"
 	"errors"
-	"fmt"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -146,7 +145,7 @@ func (c *KafkaClient) ensureConsumersLocked(topic string, groups []string) (stat
 				return
 			}
 			if driver == nil {
-				err = fmt.Errorf("tkkafka: consumer factory returned nil")
+				err = invalidConfig("consumer factory returned nil")
 				return
 			}
 			state := &consumerState{driver: driver}
@@ -168,7 +167,7 @@ func (c *KafkaClient) ensureConsumersLocked(topic string, groups []string) (stat
 // 需要可靠等待结果和可取消处理函数时使用 SubscribeContext。
 func (c *KafkaClient) Subscribe(ctx context.Context, topic string, fn func(message *kafka.Message) error, group ...string) (err error) {
 	if fn == nil {
-		err = fmt.Errorf("tkkafka: nil consumer handler")
+		err = invalidArgument("nil consumer handler")
 		return
 	}
 	_, err = c.SubscribeContext(ctx, topic, func(_ context.Context, message *kafka.Message) (handlerErr error) {
@@ -180,7 +179,7 @@ func (c *KafkaClient) Subscribe(ctx context.Context, topic string, fn func(messa
 // BatchSubscribe 兼容旧批处理回调，批次失败时整批不确认。
 func (c *KafkaClient) BatchSubscribe(ctx context.Context, topic string, fn func(messages []*kafka.Message) error, group ...string) (err error) {
 	if fn == nil {
-		err = fmt.Errorf("tkkafka: nil batch consumer handler")
+		err = invalidArgument("nil batch consumer handler")
 		return
 	}
 	_, err = c.BatchSubscribeContext(ctx, topic, func(_ context.Context, messages []*kafka.Message) (handlerErr error) {
@@ -193,7 +192,7 @@ func (c *KafkaClient) BatchSubscribe(ctx context.Context, topic string, fn func(
 // 不指定 group 时订阅配置中的全部组；指定时只允许该 topic 已配置的组后缀。
 func (c *KafkaClient) SubscribeContext(ctx context.Context, topic string, fn func(context.Context, *kafka.Message) error, group ...string) (subscription *Subscription, err error) {
 	if fn == nil {
-		err = fmt.Errorf("tkkafka: nil consumer handler")
+		err = invalidArgument("nil consumer handler")
 		return
 	}
 	return c.subscribe(ctx, topic, false, func(ctx context.Context, messages []*kafka.Message) (handlerErr error) {
@@ -205,7 +204,7 @@ func (c *KafkaClient) SubscribeContext(ctx context.Context, topic string, fn fun
 // 成功后分别提交各 partition 已处理的进度；失败、取消或关闭时不确认未完成批次。
 func (c *KafkaClient) BatchSubscribeContext(ctx context.Context, topic string, fn func(context.Context, []*kafka.Message) error, group ...string) (subscription *Subscription, err error) {
 	if fn == nil {
-		err = fmt.Errorf("tkkafka: nil batch consumer handler")
+		err = invalidArgument("nil batch consumer handler")
 		return
 	}
 	return c.subscribe(ctx, topic, true, fn, group)
@@ -229,7 +228,7 @@ func (c *KafkaClient) subscribe(ctx context.Context, topic string, batch bool, h
 		seen := make(map[string]bool, len(selected))
 		for _, group := range selected {
 			if !slices.Contains(groups, group) || seen[group] {
-				err = fmt.Errorf("tkkafka: invalid or duplicate group %q for topic %q", group, topic)
+				err = invalidArgument("invalid or duplicate group %q for topic %q", group, topic)
 				return
 			}
 			seen[group] = true
@@ -315,7 +314,7 @@ func (c *KafkaClient) consume(ctx context.Context, consumer consumerDriver, batc
 		switch value := event.(type) {
 		case *kafka.Message:
 			if value == nil || value.TopicPartition.Topic == nil || value.TopicPartition.Offset < 0 {
-				err = fmt.Errorf("tkkafka: invalid consumed message")
+				err = invalidArgument("invalid consumed message")
 				return
 			}
 			if value.TopicPartition.Error != nil {
@@ -361,12 +360,12 @@ func (c *KafkaClient) handleAndCommit(ctx context.Context, consumer consumerDriv
 	// 同一消费者串行处理，每个分区此前读到的记录均已成功，允许跳过 Kafka 自身的稀疏 offset。
 	committed, err := consumer.CommitOffsets(offsets)
 	if err != nil {
-		err = fmt.Errorf("tkkafka: commit offsets: %w", err)
+		err = operationError(ErrCommit, err)
 		return
 	}
 	for _, partition := range committed {
 		if partition.Error != nil {
-			err = errors.Join(err, fmt.Errorf("tkkafka: commit partition %d: %w", partition.Partition, partition.Error))
+			err = errors.Join(err, commitPartitionError(partition.Partition, partition.Error))
 		}
 	}
 	return
@@ -383,7 +382,7 @@ func (c *KafkaClient) retryHandler(ctx context.Context, handler func() error) (e
 			return
 		}
 		if c.config.RetryMaxCount > 0 && attempt >= c.config.RetryMaxCount {
-			err = fmt.Errorf("tkkafka: handler failed after %d retries: %w", attempt, err)
+			err = handlerFailure(attempt, err)
 			return
 		}
 		timer := time.NewTimer(c.config.RetryDelay)
@@ -401,7 +400,7 @@ func invokeHandler(handler func() error) (err error) {
 	defer func() {
 		panicValue := recover()
 		if panicValue != nil {
-			err = fmt.Errorf("tkkafka: consumer handler panic: %v", panicValue)
+			err = handlerPanic(panicValue)
 		}
 	}()
 	return handler()

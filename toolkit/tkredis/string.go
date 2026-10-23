@@ -17,9 +17,6 @@ const (
 	TTLNotFound time.Duration = -2
 )
 
-// ErrInvalidTTL 表示期限小于 -1，或向上取整后超出 time.Duration 范围。
-var ErrInvalidTTL = errors.New("tkredis: invalid ttl")
-
 // NormalizeTTL 保留 -1 和 0，正数向上取整到毫秒，其他负数返回错误。
 func NormalizeTTL(ttl time.Duration) (normalized time.Duration, err error) {
 	if ttl < NoExpiration {
@@ -119,7 +116,7 @@ func (c *Client) PTTL(ctx context.Context, key string) (ttl time.Duration, err e
 	}
 	milliseconds, ok := raw.(int64)
 	if !ok {
-		return 0, errors.New("tkredis: unexpected PTTL response")
+		return 0, unexpectedResponse("unexpected PTTL response")
 	}
 	if milliseconds == -1 || milliseconds == -2 {
 		return time.Duration(milliseconds), nil
@@ -172,16 +169,16 @@ func (c *Client) mutateString(ctx context.Context, operation, key string, value,
 	}
 	values, ok := raw.([]any)
 	if !ok || len(values) == 0 {
-		return result, errors.New("tkredis: unexpected string mutation response")
+		return result, unexpectedResponse("unexpected string mutation response")
 	}
 	flag, ok := values[0].(int64)
 	if !ok || (flag != 0 && flag != 1) {
-		return result, errors.New("tkredis: unexpected string mutation flag")
+		return result, unexpectedResponse("unexpected string mutation flag")
 	}
 	result.changed = flag == 1
 	if operation == "getset" || ((operation == "getdel" || operation == "getexpire") && result.changed) {
 		if len(values) != 2 {
-			return result, errors.New("tkredis: missing string mutation value")
+			return result, unexpectedResponse("missing string mutation value")
 		}
 		result.value, err = stringBytes(values[1])
 		result.found = err == nil
@@ -196,5 +193,5 @@ func stringBytes(raw any) (value []byte, err error) {
 	case []byte:
 		return bytes.Clone(data), nil
 	}
-	return nil, errors.New("tkredis: unexpected string response")
+	return nil, unexpectedResponse("unexpected string response")
 }

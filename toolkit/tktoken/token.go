@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"math"
 	"time"
 )
@@ -26,14 +25,6 @@ const (
 	DefaultCacheKey       = "tktoken:"
 	DefaultTokenDelimiter = "_"
 	maxAttempts           = 32
-)
-
-var (
-	ErrUnauthorized   = errors.New("tktoken: unauthorized")
-	ErrNotFound       = errors.New("tktoken: session not found")
-	ErrInvalidConfig  = errors.New("tktoken: invalid configuration")
-	ErrInvalidSession = errors.New("tktoken: invalid session")
-	ErrConflict       = errors.New("tktoken: concurrent session update")
 )
 
 // Store 是会话消费方所需的最小存储接口；比较操作必须由 Store 原子执行。
@@ -122,11 +113,11 @@ type Token struct {
 // New 使用显式协议和存储创建令牌管理器，不自动创建或关闭存储。
 func New(config Config, store Store) (token *Token, err error) {
 	if store == nil || config.Codec == nil {
-		err = fmt.Errorf("%w: store and codec are required", ErrInvalidConfig)
+		err = invalidConfig("store and codec are required")
 		return
 	}
 	if config.CacheMode < 0 || config.CacheMode > CacheModeFile {
-		err = fmt.Errorf("%w: unsupported cache mode", ErrInvalidConfig)
+		err = invalidConfig("unsupported cache mode")
 		return
 	}
 	if config.Timeout == 0 {
@@ -136,11 +127,11 @@ func New(config Config, store Store) (token *Token, err error) {
 		config.MaxRefresh = max(1, config.Timeout/2)
 	}
 	if config.Timeout < 1 || int64(config.Timeout) > math.MaxInt64/int64(time.Millisecond) {
-		err = fmt.Errorf("%w: timeout is outside duration range", ErrInvalidConfig)
+		err = invalidConfig("timeout is outside duration range")
 		return
 	}
 	if config.MaxRefresh < 1 || config.MaxRefresh > config.Timeout {
-		err = fmt.Errorf("%w: refresh interval must be within timeout", ErrInvalidConfig)
+		err = invalidConfig("refresh interval must be within timeout")
 		return
 	}
 	if config.CacheKey == "" {
@@ -169,7 +160,7 @@ func NewLegacy(config Config, store Store) (token *Token, err error) {
 // GenToken 生成令牌；MultiLogin 为 true 时复用现存会话及业务数据。
 func (t *Token) GenToken(ctx context.Context, userKey string, data any) (issued IssuedToken, err error) {
 	if userKey == "" {
-		err = fmt.Errorf("%w: user key is empty", ErrInvalidConfig)
+		err = invalidConfig("user key is empty")
 		return
 	}
 	var identity Identity
@@ -342,7 +333,7 @@ func (t *Token) load(ctx context.Context, key string, identity Identity) (raw []
 		return
 	}
 	if !found {
-		err = errors.Join(ErrUnauthorized, ErrNotFound)
+		err = sessionNotFound()
 		return
 	}
 	session, err = decodeSession(raw, identity.UserKey)
@@ -354,7 +345,7 @@ func (t *Token) load(ctx context.Context, key string, identity Identity) (raw []
 		return
 	}
 	if session.ExpiresAt > 0 && session.ExpiresAt <= t.now().UnixMilli() {
-		err = errors.Join(ErrUnauthorized, ErrNotFound)
+		err = sessionNotFound()
 		return
 	}
 	return

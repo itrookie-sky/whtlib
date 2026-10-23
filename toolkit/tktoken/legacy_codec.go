@@ -5,7 +5,6 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"encoding/base64"
-	"fmt"
 	"strings"
 )
 
@@ -28,7 +27,7 @@ func NewLegacyCodec(key []byte, delimiter string) (codec *LegacyCodec, err error
 	}
 	block, cipherErr := aes.NewCipher(bytes.Clone(key))
 	if cipherErr != nil {
-		err = fmt.Errorf("%w: AES key must contain 16, 24 or 32 bytes", ErrInvalidConfig)
+		err = invalidCodecKey(cipherErr)
 		return
 	}
 	codec = &LegacyCodec{block: block, delimiter: delimiter}
@@ -38,11 +37,11 @@ func NewLegacyCodec(key []byte, delimiter string) (codec *LegacyCodec, err error
 // Encode 将无歧义的用户标识和会话身份编码成旧格式令牌。
 func (c *LegacyCodec) Encode(userKey, uuid string) (value string, err error) {
 	if c == nil || c.block == nil || c.delimiter == "" {
-		err = fmt.Errorf("%w: legacy codec is not initialized", ErrInvalidConfig)
+		err = invalidConfig("legacy codec is not initialized")
 		return
 	}
 	if userKey == "" || uuid == "" || strings.Contains(userKey, c.delimiter) || strings.Contains(uuid, c.delimiter) {
-		err = fmt.Errorf("%w: identity is empty or contains token delimiter", ErrInvalidConfig)
+		err = invalidConfig("identity is empty or contains token delimiter")
 		return
 	}
 	plain := []byte(userKey + c.delimiter + uuid)
@@ -57,7 +56,7 @@ func (c *LegacyCodec) Encode(userKey, uuid string) (value string, err error) {
 // Decode 严格检查 Base64、块长度和 PKCS7 填充，拒绝有歧义的身份。
 func (c *LegacyCodec) Decode(value string) (identity Identity, err error) {
 	if c == nil || c.block == nil || c.delimiter == "" {
-		err = fmt.Errorf("%w: legacy codec is not initialized", ErrInvalidConfig)
+		err = invalidConfig("legacy codec is not initialized")
 		return
 	}
 	encrypted, decodeErr := base64.StdEncoding.Strict().DecodeString(value)

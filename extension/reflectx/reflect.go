@@ -2,8 +2,6 @@
 package reflectx
 
 import (
-	"errors"
-	"fmt"
 	"reflect"
 	"strings"
 )
@@ -114,13 +112,6 @@ func IsNil(value any) (isNil bool) {
 	return false
 }
 
-var (
-	// ErrNotSettable 表示字段不可赋值。
-	ErrNotSettable = errors.New("reflectx: field is not settable")
-	// ErrNotConvertible 表示输入不能转换为字段类型。
-	ErrNotConvertible = errors.New("reflectx: value is not convertible")
-)
-
 // GetFieldByTag 按标签查找直接字段；空标签类别使用 json，空标签或 - 沿用字段名。
 func GetFieldByTag(structVal reflect.Value, structTyp reflect.Type, tagName string, tag string) (field reflect.Value) {
 	if structTyp == nil {
@@ -164,7 +155,7 @@ func SetFieldValue(fieldVal reflect.Value, value any) (err error) {
 			fieldVal.SetZero()
 			return
 		}
-		return fmt.Errorf("%w: nil to %s", ErrNotConvertible, fieldVal.Type())
+		return conversionError("nil to %s", fieldVal.Type())
 	}
 	input := reflect.ValueOf(value)
 	if input.Type().AssignableTo(fieldVal.Type()) {
@@ -172,7 +163,7 @@ func SetFieldValue(fieldVal reflect.Value, value any) (err error) {
 		return
 	}
 	if !input.CanConvert(fieldVal.Type()) {
-		return fmt.Errorf("%w: %s to %s", ErrNotConvertible, input.Type(), fieldVal.Type())
+		return conversionError("%s to %s", input.Type(), fieldVal.Type())
 	}
 	fieldVal.Set(input.Convert(fieldVal.Type()))
 	return

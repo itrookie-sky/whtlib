@@ -2,7 +2,6 @@
 package logx
 
 import (
-	"fmt"
 	"log/slog"
 	"reflect"
 	"regexp"
@@ -49,25 +48,25 @@ func validKey(key any) (valid bool) {
 func BuildDefaultConfig(config Config) (result Config, err error) {
 	result = config
 	if result.Skip < 0 {
-		return result, fmt.Errorf("logx: negative skip")
+		return result, invalidConfig("negative skip")
 	}
 	if result.Level == nil {
 		result.Level = slog.LevelInfo
 	} else if isNil(result.Level) {
-		return result, fmt.Errorf("logx: nil level")
+		return result, invalidConfig("nil level")
 	}
 	result.Level = result.Level.Level()
 	if result.TraceKey == nil {
 		result.TraceKey = "traceId"
 	}
 	if !validKey(result.TraceKey) {
-		return result, fmt.Errorf("logx: invalid trace key")
+		return result, invalidConfig("invalid trace key")
 	}
 	result.ContextFields = slices.Clone(result.ContextFields)
 	seen := map[string]bool{"traceId": true}
 	for _, field := range result.ContextFields {
 		if !fieldNamePattern.MatchString(field.Name) || seen[field.Name] || !validKey(field.Key) {
-			return result, fmt.Errorf("logx: invalid context field %q", field.Name)
+			return result, invalidConfig("invalid context field %q", field.Name)
 		}
 		seen[field.Name] = true
 	}

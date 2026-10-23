@@ -11,11 +11,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var (
-	ErrLockHeld = errors.New("tkredis: this lock already holds a lease")
-	ErrLockLost = errors.New("tkredis: lock ownership was lost")
-)
-
 // LockOption 设置分布式锁选项。
 type LockOption func(lock *Lock)
 
@@ -61,7 +56,7 @@ func (c *Client) NewLock(key string, options ...LockOption) (lock *Lock, err err
 	}
 	if key == "" || lock.expiration < time.Millisecond || lock.retryInterval <= 0 {
 		lock = nil
-		err = errors.New("tkredis: lock requires a key, expiration >= 1ms and a positive retry interval")
+		err = invalidArgument("lock requires a key, expiration >= 1ms and a positive retry interval")
 	}
 	return
 }
@@ -178,7 +173,7 @@ func (l *Lock) maintain(ctx context.Context, lease *lockLease, milliseconds int6
 func (l *Lock) SpinLock(ctx context.Context, attempts int) (ok bool, err error) {
 	ctx = nonNilContext(ctx)
 	if attempts <= 0 {
-		err = errors.New("tkredis: lock attempts must be positive")
+		err = invalidArgument("lock attempts must be positive")
 		return
 	}
 	for i := range attempts {

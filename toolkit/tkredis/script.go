@@ -3,7 +3,6 @@ package tkredis
 import (
 	"context"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,8 +11,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-var ErrScriptNotFound = errors.New("tkredis: script is not registered")
-
 // RegisterScript 并发安全地注册或替换脚本，不访问服务器。
 func (c *Client) RegisterScript(name, script string) (err error) {
 	err = c.checkOpen()
@@ -21,7 +18,7 @@ func (c *Client) RegisterScript(name, script string) (err error) {
 		return
 	}
 	if name == "" || strings.TrimSpace(script) == "" {
-		err = errors.New("tkredis: script name and source are required")
+		err = invalidArgument("script name and source are required")
 		return
 	}
 	c.scriptMu.Lock()
@@ -75,7 +72,7 @@ func (c *Client) EvalSha(ctx context.Context, name string, keys []string, args .
 	script, ok := c.scripts[name]
 	c.scriptMu.RUnlock()
 	if !ok {
-		err = fmt.Errorf("%w: %s", ErrScriptNotFound, name)
+		err = scriptNotFound(name)
 		return
 	}
 	return c.runScript(ctx, redis.NewScript(script), keys, args...)
@@ -166,7 +163,7 @@ func (c *Client) Once(ctx context.Context, key string, expiration ...time.Durati
 // Polling 原子递增并在 [0, maximum) 内循环。
 func (c *Client) Polling(ctx context.Context, key string, maximum int) (index int, err error) {
 	if maximum <= 0 {
-		err = errors.New("tkredis: polling maximum must be positive")
+		err = invalidArgument("polling maximum must be positive")
 		return
 	}
 	value, err := c.Eval(ctx, `
@@ -185,7 +182,7 @@ return next - 1`, []string{key}, maximum)
 
 func positiveMilliseconds(ttl time.Duration) (milliseconds int64, err error) {
 	if ttl <= 0 {
-		err = errors.New("tkredis: expiration must be positive")
+		err = invalidArgument("expiration must be positive")
 		return
 	}
 	return ttlMilliseconds(ttl)

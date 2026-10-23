@@ -3,7 +3,6 @@ package tkkafka
 import (
 	"context"
 	"errors"
-	"fmt"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -12,14 +11,6 @@ import (
 	"github.com/itrookie-sky/whtlib/adapter"
 
 	"github.com/confluentinc/confluent-kafka-go/v2/kafka"
-)
-
-var (
-	ErrClosed            = errors.New("tkkafka: client closed")
-	ErrDisabled          = errors.New("tkkafka: client or topic mode disabled")
-	ErrExcluded          = errors.New("tkkafka: topic excluded from production")
-	ErrAlreadySubscribed = errors.New("tkkafka: consumer already subscribed")
-	ErrUndelivered       = errors.New("tkkafka: delivery incomplete at shutdown")
 )
 
 // producerDriver 和 consumerDriver 将驱动操作隔离，便于无需 broker 的模块验证。
@@ -113,7 +104,7 @@ func New(cfg *Config, opts ...Option) (client *KafkaClient, err error) {
 		}
 	}
 	if options.encoder == nil || options.closeTimeout <= 0 || options.pollInterval <= 0 {
-		err = fmt.Errorf("tkkafka: encoder and positive lifecycle intervals are required")
+		err = invalidConfig("encoder and positive lifecycle intervals are required")
 		return
 	}
 	ctx, cancel := context.WithCancel(context.Background())
@@ -190,7 +181,7 @@ func (c *KafkaClient) addCloseError(err error) {
 func (c *KafkaClient) topicConfig(topic string) (cfg TopicConfig, err error) {
 	cfg, ok := c.config.TopicConfig[topic]
 	if !ok {
-		err = fmt.Errorf("tkkafka: topic %q not configured", topic)
+		err = topicNotConfigured(topic)
 	}
 	return
 }
@@ -275,7 +266,7 @@ func (c *KafkaClient) shutdown() {
 	for _, producer := range producers {
 		remaining := producer.Flush(durationMilliseconds(max(0, time.Until(deadline))))
 		if remaining > 0 {
-			c.addCloseError(fmt.Errorf("%w: %d queued messages", ErrUndelivered, remaining))
+			c.addCloseError(undeliveredMessages(remaining))
 		}
 		producer.Close()
 	}

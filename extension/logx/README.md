@@ -129,6 +129,12 @@ OnError 按实例登记，共享文件的后台错误通知当前登记的各实
 
 后台错误通过 OnError 报告，默认写入 stderr。普通写入不逐条 fsync，当前不对外提供 Writer 或 Sync 接口。
 
+## 错误处理
+
+错误集中在 [error.go](error.go)。New、SetConfig 等初始化或配置错误可通过 errors.Is 匹配 `ErrInvalidConfig`；共享文件轮转策略冲突、文件名表达式重叠或归档名称冲突匹配 `ErrFileConflict`；活动文件不可用匹配 `ErrFileUnavailable`。
+
+文件系统、字段编码等底层错误仍保留在错误链中，可通过 errors.AsType 获取原始类型；关闭状态继续复用 `os.ErrClosed`。打印方法不返回错误，诊断继续按既有 stderr/OnError 约定处理。
+
 ## 调用位置和关闭
 
 默认显示日志调用处的 `目录/文件:行号`，`FullPath: true` 输出完整路径。Skip 追加层数，复制当前配置快照并创建独立实例；负数或溢出 panic，超出栈时省略位置。关闭实例上调用 Skip 得到的实例同样处于关闭状态。

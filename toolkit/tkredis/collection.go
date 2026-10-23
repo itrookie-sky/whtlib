@@ -2,7 +2,6 @@ package tkredis
 
 import (
 	"context"
-	"errors"
 	"math"
 	"time"
 )
@@ -80,7 +79,7 @@ func (c *Client) SMembers(ctx context.Context, key string, expiration ...time.Du
 // SPop 原子弹出至多 count 个成员，并更新剩余集合的 TTL。
 func (c *Client) SPop(ctx context.Context, key string, count int, expiration ...time.Duration) (members []string, err error) {
 	if count < 0 {
-		err = errors.New("tkredis: set pop count must not be negative")
+		err = invalidArgument("set pop count must not be negative")
 		return
 	}
 	value, err := c.collectionCommand(ctx, "SPOP", key, expiration, count)
@@ -190,7 +189,7 @@ func (c *Client) ZRange(ctx context.Context, key string, start, stop int, descen
 // ZPage 原子读取总数和指定页；页码从一开始。
 func (c *Client) ZPage(ctx context.Context, key string, page, pageSize int, descending, withScores bool, expiration ...time.Duration) (total int, members []ScoredMember, err error) {
 	if page <= 0 || pageSize <= 0 || page > math.MaxInt/pageSize {
-		err = errors.New("tkredis: page and page size must be positive and within range")
+		err = invalidArgument("page and page size must be positive and within range")
 		return
 	}
 	ttl, err := collectionTTL(expiration)
@@ -220,7 +219,7 @@ return {total, members}`, []string{key}, command, (page-1)*pageSize, page*pageSi
 	}
 	parts, ok := value.([]any)
 	if !ok || len(parts) != 2 {
-		err = errors.New("tkredis: unexpected page script result")
+		err = unexpectedResponse("unexpected page script result")
 		return
 	}
 	total, err = integerResult(parts[0])
@@ -265,7 +264,7 @@ func (c *Client) ZIncrBy(ctx context.Context, key string, increment float64, mem
 // limit 为空表示不分页，否则必须为非负的 [offset, count]。
 func (c *Client) ZRangeByScore(ctx context.Context, key, minimum, maximum string, descending, withScores bool, limit []int, expiration ...time.Duration) (members []ScoredMember, err error) {
 	if len(limit) != 0 && (len(limit) != 2 || limit[0] < 0 || limit[1] < 0) {
-		err = errors.New("tkredis: score range limit must be [offset, count] with non-negative values")
+		err = invalidArgument("score range limit must be [offset, count] with non-negative values")
 		return
 	}
 	command := "ZRANGEBYSCORE"
@@ -350,7 +349,7 @@ func (c *Client) ZScore(ctx context.Context, key string, member any, expiration 
 func scoredResults(value any, withScores bool) (members []ScoredMember, err error) {
 	values, ok := value.([]any)
 	if !ok {
-		err = errors.New("tkredis: unexpected scored member result")
+		err = unexpectedResponse("unexpected scored member result")
 		return
 	}
 	if withScores && len(values) > 0 {
@@ -361,7 +360,7 @@ func scoredResults(value any, withScores bool) (members []ScoredMember, err erro
 			for _, value := range values {
 				pair, pairOK := value.([]any)
 				if !pairOK || len(pair) != 2 {
-					err = errors.New("tkredis: incomplete nested scored member result")
+					err = unexpectedResponse("incomplete nested scored member result")
 					return
 				}
 				flattened = append(flattened, pair...)
@@ -374,14 +373,14 @@ func scoredResults(value any, withScores bool) (members []ScoredMember, err erro
 		step = 2
 	}
 	if len(values)%step != 0 {
-		err = errors.New("tkredis: incomplete scored member result")
+		err = unexpectedResponse("incomplete scored member result")
 		return
 	}
 	members = make([]ScoredMember, 0, len(values)/step)
 	for i := 0; i < len(values); i += step {
 		text, textOK := values[i].(string)
 		if !textOK {
-			err = errors.New("tkredis: unexpected member encoding")
+			err = unexpectedResponse("unexpected member encoding")
 			return
 		}
 		member := ScoredMember{Member: text}

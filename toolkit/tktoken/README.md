@@ -57,6 +57,8 @@ func protect(manager *tktoken.Token, next http.Handler) (handler http.Handler) {
 
 使用 `errors.Is` 判断 `ErrUnauthorized`、`ErrNotFound`、`ErrInvalidConfig`、`ErrInvalidSession`、`ErrConflict`。缺失或已过期的会话同时匹配 `ErrUnauthorized` 和 `ErrNotFound`；被其他登录替换的令牌匹配 `ErrUnauthorized`。存储错误及上下文取消向上传递。
 
+上述错误及构造助手集中维护在 [error.go](error.go)。旧协议密钥校验保留 aes.KeySizeError，可通过 errors.AsType 获取；认证失败继续按既有约定统一为 ErrUnauthorized，不暴露自定义 Codec 的敏感错误内容。
+
 ## 配置与旧协议
 
 | 配置 | 类型及单位 | 默认与迁移说明 |

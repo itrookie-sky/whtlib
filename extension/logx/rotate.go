@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 	"slices"
@@ -38,7 +37,7 @@ func (w *fileWriter) archivePath(now time.Time) (path string, err error) {
 			return "", statErr
 		}
 	}
-	return "", fmt.Errorf("logx: unable to allocate archive name")
+	return "", fileConflict("unable to allocate archive name")
 }
 
 func (w *fileWriter) rotateLocked(now time.Time) (err error) {
@@ -154,7 +153,7 @@ func (w *fileWriter) cleanupLocked(now time.Time) (err error) {
 			remaining--
 			continue
 		}
-		err = errors.Join(err, fmt.Errorf("logx: remove archive %q: %w", item.name, removeErr))
+		err = errors.Join(err, archiveRemovalError(item.name, removeErr))
 	}
 	return
 }

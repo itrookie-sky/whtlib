@@ -4,7 +4,6 @@ package tkredis
 import (
 	"context"
 	"errors"
-	"fmt"
 	"sync"
 
 	"github.com/itrookie-sky/whtlib/adapter"
@@ -18,12 +17,6 @@ type ClientConfig = redis.Options
 
 // ClientConfigOption 修改客户端配置。
 type ClientConfigOption func(config *ClientConfig)
-
-var (
-	ErrClosed         = errors.New("tkredis: client is closed")
-	ErrInvalidClient  = errors.New("tkredis: native client is nil")
-	ErrInvalidCommand = errors.New("tkredis: command is empty")
-)
 
 // Client 管理命令入口、脚本和自身创建的维护任务。
 type Client struct {
@@ -203,7 +196,7 @@ func (c *Client) Pipeline(ctx context.Context, commands ...[]any) (results []Res
 	prepared := make([][]any, len(commands))
 	for i, command := range commands {
 		if len(command) == 0 {
-			err = fmt.Errorf("%w at index %d", ErrInvalidCommand, i)
+			err = invalidCommand(i)
 			return
 		}
 		prepared[i], err = explicitArgs(command)

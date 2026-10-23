@@ -127,6 +127,8 @@ err = verifier.VerifyString("待签名数据", encoded)
 
 ## 错误处理
 
+错误声明和包装助手集中在 [error.go](error.go)。使用 errors.Is 判断类别，使用 errors.AsType 获取底层类型；签名执行、签名解码和标准库验签错误保留原始错误链。
+
 使用 `errors.Is` 判断错误：
 
 
@@ -137,6 +139,7 @@ err = verifier.VerifyString("待签名数据", encoded)
 | `ErrMissingPublicKey`  | 未初始化实例尝试验签                         |
 | `ErrUnsupportedOption` | 编码、摘要或 PSS 配置不适用于密钥            |
 | `ErrVerification`      | 签名解码失败、签名畸形或消息/公钥不匹配      |
+| `ErrSigning`           | 私钥签名执行失败，保留原始原因              |
 
 nil 实例和零值实例的方法返回缺少密钥错误。错误不包含传入的密钥、消息或签名内容。
 

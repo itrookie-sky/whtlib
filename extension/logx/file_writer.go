@@ -59,10 +59,10 @@ func normalizeFileConfig(config FileConfig) (result FileConfig, err error) {
 		result.RotateCheckInterval = defaults.RotateCheckInterval
 	}
 	if result.RotateSize < -1 || result.RotateInterval < -1 || result.RotateBackupExpire < -1 || result.RotateBackupLimit < 0 || result.RotateCheckInterval < 0 {
-		return result, fmt.Errorf("logx: invalid rotation configuration")
+		return result, invalidConfig("invalid rotation configuration")
 	}
 	if result.File == ".log" || !strings.HasSuffix(result.File, ".log") || strings.ContainsAny(result.File, `/\`) || filepath.Base(result.File) != result.File {
-		return result, fmt.Errorf("logx: invalid log filename %q", result.File)
+		return result, invalidConfig("invalid log filename %q", result.File)
 	}
 	_, err = compileFilePattern(result.File)
 	if err != nil {
@@ -129,7 +129,7 @@ func (w *fileWriter) openLocked(now time.Time) (err error) {
 	path := filepath.Join(w.config.Path, name)
 	info, statErr := os.Lstat(path)
 	if statErr == nil && !info.Mode().IsRegular() {
-		return fmt.Errorf("logx: active file is not a regular file")
+		return invalidConfig("active file is not a regular file")
 	}
 	if statErr != nil && !errors.Is(statErr, os.ErrNotExist) {
 		return statErr
@@ -213,7 +213,7 @@ func (w *fileWriter) Sync() (err error) {
 		return os.ErrClosed
 	}
 	if w.file == nil {
-		return fmt.Errorf("logx: active file unavailable")
+		return ErrFileUnavailable
 	}
 	return w.file.Sync()
 }

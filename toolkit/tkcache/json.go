@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"io"
 	"time"
 
@@ -37,15 +36,16 @@ func decodeJSON[T any](data []byte) (value T, err error) {
 	decoder.UseNumber()
 	err = decoder.Decode(&value)
 	if err != nil {
+		err = decodeError(err)
 		return
 	}
 	var extra any
 	trailingErr := decoder.Decode(&extra)
 	if !errors.Is(trailingErr, io.EOF) {
 		if trailingErr == nil {
-			err = fmt.Errorf("tkcache: multiple JSON values")
+			err = multipleJSONValues()
 		} else {
-			err = trailingErr
+			err = decodeError(trailingErr)
 		}
 	}
 	return
