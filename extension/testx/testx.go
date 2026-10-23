@@ -6,10 +6,10 @@ import (
 	"path/filepath"
 )
 
-// InitRunProjectRoot 单测运行目录设置为项目根目录
+// ChdirToProjectRoot 单测运行目录设置为项目根目录
 //
 //	pwd: 单测文件的运行路径
-func InitRunProjectRoot(pwd string) {
+func ChdirToProjectRoot(pwd string) {
 	// 获取当前测试文件的路径
 	dir := pwd
 	// 向上查找 go.mod 文件，直到项目根目录
