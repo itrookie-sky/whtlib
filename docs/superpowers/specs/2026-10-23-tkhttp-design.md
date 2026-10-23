@@ -4,7 +4,7 @@
 
 在 `toolkit/tkhttp` 提供框架无关、可并发复用的 HTTP 客户端，通过函数选项完成初始化和单次请求配置。
 
-用户已确认：使用现有 `logx.LogAcc` 累计字段；每次 HTTP 逻辑调用独立累计，包含重试，结束打印一条汇总日志。客户端配置、默认值和以下 API 均为本设计的建议，尚未实现。
+用户已确认：使用现有 `logx.LogAcc` 累计字段；每次 HTTP 逻辑调用独立累计，包含重试，结束打印一条汇总日志。连接池基于标准库，通过函数选项注入，未注入时创建默认连接池。其他客户端配置、默认值和以下 API 均为本设计的建议，尚未实现。
 
 本次交付设计文档。后续实现以确认后的设计为准，在当前仓库的 `main` 分支完成。
 
@@ -20,7 +20,7 @@
 
 ## 首版范围
 
-- 复用 `http.Client` / `http.Transport`；支持注入现有客户端。
+- 复用 `http.Client` / `http.Transport`；通过 `WithTransport` 注入标准库连接池，未注入时创建默认池，也支持注入现有客户端。
 - 支持 BaseURL、默认请求头、query、JSON、表单和原始字节请求体。
 - 提供缓冲响应、可选 JSON 解码、明确的状态码错误和响应大小限制。
 - 支持总超时、有限重试、指数退避和随机抖动。
@@ -35,6 +35,7 @@
 
 ```go
 func New(opts ...Option) (client *Client, err error)
+func WithTransport(transport *http.Transport) (option Option)
 
 func (c *Client) Do(ctx context.Context, method, target string, opts ...RequestOption) (response *Response, err error)
 func (c *Client) Get(ctx context.Context, target string, opts ...RequestOption) (response *Response, err error)
@@ -52,7 +53,8 @@ func (c *Client) CloseIdleConnections()
 | `WithBaseURL(string)` | 可选；必须是包含主机的 HTTP(S) 绝对 URL，不接受 userinfo、query 和 fragment |
 | `WithDefaultHeader(string, string)` | 配置默认请求头，同名字段以后一次为准 |
 | `WithTimeout(time.Duration)` | 默认 10 秒；0 取消组件自身的总超时，负数无效 |
-| `WithHTTPClient(*http.Client)` | 借用 Transport、Jar 和 Timeout 等公开配置；显式 nil 无效 |
+| `WithTransport(*http.Transport)` | 直接借用指定的标准库连接池；显式 nil 无效；优先于注入客户端的 Transport |
+| `WithHTTPClient(*http.Client)` | 借用 Transport、Jar 和 Timeout 等公开配置；显式 nil 无效；Transport 为 nil 且没有 WithTransport 时创建默认池 |
 | `WithLogger(*logx.Logger)` | 默认使用 `logx.Default()`；nil 同样表示全局实例，生命周期由调用方管理 |
 | `WithLogging(bool)` | 默认 true；false 时不创建累加器、不输出 HTTP 日志 |
 | `WithRetry(RetryPolicy)` | 默认仅尝试一次；配置后仍受方法幂等性和请求总时限约束 |
@@ -81,7 +83,9 @@ Header/query/form/map 容器和原始字节在选项创建时复制；业务字�
 
 `ctx` 必须非 nil，nil 属于调用错误，沿用 `LogAcc` 的 panic 约定。已经取消的合法 context 返回对应错误，日志仍使用原 context 打印，不发起网络请求。
 
-## URL、连接与超时
+## URL、连接池与超时
+
+### URL 与重定向
 
 BaseURL 采用标准库 `url.URL.ResolveReference` 的语义：
 
@@ -95,9 +99,66 @@ BaseURL 不被当成路径字符串直接拼接，末尾 `/` 按标准库规则�
 
 首版不自动跟随重定向：通过 `http.ErrUseLastResponse` 取得原始 3xx 响应，再按状态码错误返回。注入客户端的 `CheckRedirect` 不沿用，此覆盖行为写入 API 注释；签名、Header 和请求体不会隐式转发到另一个 URL。
 
-默认创建并复用独立 Transport，采用标准库默认配置快照；若全局 DefaultTransport 为可克隆的 `*http.Transport` 则克隆，其他实现要求通过 `WithHTTPClient` 显式注入，返回配置错误而非类型断言 panic。注入时新建私有 `http.Client` 并复制公开配置，Transport/Jar 作为借用资源共享，不修改传入实例。借用 Transport/Jar 应满足原生 HTTP 客户端的并发约定。
+### 标准库连接池与注入
+
+连接池直接使用标准库的 `*http.Transport`，由其管理连接建立、keep-alive、空闲回收和并发连接复用。`tkhttp` 仅负责选择和持有 Transport，保留标准库连接管理语义。
+
+```go
+transport := &http.Transport{
+	Proxy: http.ProxyFromEnvironment,
+	DialContext: (&net.Dialer{
+		Timeout:   30 * time.Second,
+		KeepAlive: 30 * time.Second,
+	}).DialContext,
+	ForceAttemptHTTP2:     true,
+	MaxIdleConns:          200,
+	MaxIdleConnsPerHost:   20,
+	MaxConnsPerHost:       100,
+	IdleConnTimeout:       90 * time.Second,
+	TLSHandshakeTimeout:   10 * time.Second,
+	ExpectContinueTimeout: time.Second,
+}
+
+client, err := tkhttp.New(tkhttp.WithTransport(transport))
+// 处理 err；可将同一个 transport 注入其他 Client，共享实际连接池。
+```
+
+上述代码中的池参数是调用方自定义示例。注入直接使用原始 Transport 指针，保留已有连接和跨客户端共享能力，不对注入池调用 `Clone`。Transport 的配置在使用前完成，投入使用后不并发修改公开配置字段。
+
+构造时按以下顺序确定最终 Transport；选项的书写顺序不改变这一级别，同类选项仍以后一次为准：
+
+| 输入 | 最终 Transport | 所有者 |
+| --- | --- | --- |
+| 提供 `WithTransport(pool)` | 使用 pool，即使同时提供 WithHTTPClient | 调用方 |
+| 仅提供 `WithHTTPClient(client)`，其 Transport 非 nil | 使用传入客户端的 Transport，支持原生 RoundTripper 扩展 | 调用方 |
+| 未提供上述 Transport，包括注入客户端的 Transport 为 nil | 创建独立的默认 `*http.Transport` | tkhttp Client |
+
+显式 `WithTransport(nil)`、`WithHTTPClient(nil)` 或最终选中的 typed nil RoundTripper 返回 `ErrInvalidConfig`。只有确定需要默认池时才创建；明确注入时不额外创建闲置池。
+
+默认池在 `New` 中创建一次，供该 Client 的所有请求和重试复用；连接由 Transport 按请求需要建立。不同 Client 默认拥有不同的池，需要共享时显式注入同一实例。默认创建逻辑使用 `http.Transport`、`net.Dialer` 和标准库代理处理，参数以当前项目 Go 1.26.3 的标准默认配置为基线，与进程级 `http.DefaultTransport` 的替换相互独立：
+
+| 默认参数 | 值与含义 |
+| --- | --- |
+| `Proxy` | `http.ProxyFromEnvironment` |
+| `DialContext` | `net.Dialer`，拨号 Timeout 30s、TCP KeepAlive 30s |
+| `ForceAttemptHTTP2` | true，尝试协商 HTTP/2 |
+| `MaxIdleConns` | 100，所有主机的空闲连接总上限 |
+| `MaxIdleConnsPerHost` | 0，沿用标准库 `DefaultMaxIdleConnsPerHost`，当前为 2 |
+| `MaxConnsPerHost` | 0，沿用标准库不限制单主机连接总数的语义 |
+| `IdleConnTimeout` | 90s |
+| `TLSHandshakeTimeout` | 10s |
+| `ExpectContinueTimeout` | 1s |
+| `DisableKeepAlives` | false，启用连接复用 |
+
+空闲连接上限与连接总数分别由标准库对应字段控制。`MaxConnsPerHost` 限制连接数量，不等于业务请求并发数，HTTP/2 可在同一连接上复用多个请求。调用方需要定制时配置标准 Transport 后注入，不再额外定义同义的连接池配置类型。
+
+`tkhttp` 始终新建私有 `http.Client`。注入客户端时只复制公开配置，再应用最终 Transport 和组件重定向规则，不修改传入客户端；Transport/Jar 是借用资源，应满足原生 HTTP 客户端的并发约定。
 
 `CloseIdleConnections` 只作用于组件创建的 Transport，借用 Transport 时为空操作；不取消正在执行的请求。HTTP 响应体统一由组件读取并关闭，返回值不要求调用方 Close。Logger 始终是借用资源。
+
+共享池由调用方在合适的生命周期节点统一调用 `transport.CloseIdleConnections()`；单个 tkhttp Client 不清理其他使用方共享的空闲连接。该标准库方法只关闭当前空闲连接，Transport 后续仍可按需建立连接。
+
+### 总超时
 
 组件超时覆盖整次逻辑调用，包括准备、签名钩子、各次请求、读取和重试等待；父 context 的更早截止时间始终生效。借用 `http.Client.Timeout` 仍可提前终止某次请求。context 可以取消网络与等待；同步编码、解码及调用方钩子不能被强制抢占，前后检查 context，钩子应配合 context 及时返回。
 
@@ -253,13 +314,16 @@ func fetchDevices(ctx context.Context, logger *logx.Logger) (result map[string]a
 
 建议在 `toolkit/tkhttp/` 按 `client.go`、`options.go`、`request.go`、`response.go`、`retry.go`、`hook.go`、`log.go`、`error.go` 和 `README.md` 组织。仅供 tkhttp 使用的类型和辅助逻辑留在包内，`adapter/` 不增加单组件接口。
 
-实现后应检查成功、准备失败、超时取消、HTTP 状态错误、读取超限、解码失败和重试耗尽等路径；特别验证两次尝试最终只输出一条日志、并发请求字段隔离、签名字节与发送字节一致、敏感数据不进入日志，以及借用客户端和 Logger 不被修改或关闭。
+实现后应检查成功、准备失败、超时取消、HTTP 状态错误、读取超限、解码失败和重试耗尽等路径；特别验证两次尝试最终只输出一条日志、并发请求字段隔离、签名字节与发送字节一致、敏感数据不进入日志，以及借用客户端和连接池的配置不被修改、借用池不被主动清理、Logger 不被关闭。
+
+连接池验证还应覆盖：未注入时创建独立默认池；单 Client 多次请求和重试复用同一 Transport；多个 Client 注入同一池时保留实例身份和连接共享；WithTransport 与 WithHTTPClient 的组合顺序不改变优先级；注入客户端的 nil Transport 触发默认创建；显式 nil 和 typed nil 拒绝；组件仅清理自有池的空闲连接。实际连接复用通过本地 httptest 的连接状态或 httptrace 验证。
 
 按全局工作流，新增测试需要另行获得用户允许。获准后仅采用 `httptest` 或自定义 RoundTripper，覆盖取消/等待、Retry-After、body 重放、URL 解析、资源关闭、日志数量和调用位置，并对 `tkhttp` 运行包级 race 与 vet 检查，不连接真实平台或运行整个仓库集成测试。本次仅修改设计文档，不编写或执行新增测试。
 
 ## 参考
 
 - [Go net/http：并发复用 Client/Transport、响应体关闭、context 和重定向](https://pkg.go.dev/net/http)
+- [Go http.Transport：连接池参数、Clone 与空闲连接回收](https://pkg.go.dev/net/http#Transport)
 - [Go net/url：ResolveReference 的相对地址规则](https://pkg.go.dev/net/url#URL.ResolveReference)
 - [Go io：LimitReader 与有限读取](https://pkg.go.dev/io#LimitReader)
 - [AWS Builders’ Library：超时、重试、退避与随机抖动](https://aws.amazon.com/builders-library/timeouts-retries-and-backoff-with-jitter/)
