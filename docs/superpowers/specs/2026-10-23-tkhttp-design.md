@@ -4,9 +4,9 @@
 
 在 `toolkit/tkhttp` 提供框架无关、可并发复用的 HTTP 客户端。基本参数通过 `Config` 传入，单次请求通过可省略的 `RequestConfig` 覆盖配置，省略时使用 Client 默认值，函数选项仅用于可选依赖注入。
 
-用户已确认：在现有 `adapter` 包声明 LogAcc 契约，通过依赖注入供 tkhttp 使用，`logx` 提供实现；每次 HTTP 调用独立累计，结束打印一条汇总日志。连接池基于标准库，通过函数选项注入，未注入时创建默认连接池。基本参数使用 Config，有合理默认值的补齐默认值，无法默认的必填参数缺失时直接报错。请求接口中的配置参数可省略，未传时使用 Client 默认配置。LogAcc 的开始时间支持构造时传入和通过 SetStartTime 修改，不声明 Factory 函数类型。tkhttp 不提供重试能力，也不依赖 tkretry；需要重试时由调用方显式组合独立组件。其他默认值和以下 API 均为本设计的建议，尚未实现。
+用户已确认：在现有 `adapter` 包声明 LogAcc 契约，通过依赖注入供 tkhttp 使用，`logx` 提供实现；每次 HTTP 调用独立累计，结束打印一条汇总日志。连接池基于标准库，通过函数选项注入，未注入时创建默认连接池。基本参数使用 Config，有合理默认值的补齐默认值，无法默认的必填参数缺失时直接报错。请求接口中的配置参数可省略，未传时使用 Client 默认配置。LogAcc 的开始时间支持构造时传入和通过 SetStartTime 修改，不声明 Factory 函数类型。tkhttp 不提供重试能力，也不依赖 tkretry；需要重试时由调用方显式组合独立组件。以下 API 和默认约定已在首版实现。
 
-本次交付设计文档。后续实现以确认后的设计为准，在当前仓库的 `main` 分支完成。
+已按本设计在 `main` 分支实现 tkhttp、共享 LogAcc 契约和 logx 适配层；用法见 [tkhttp README](../../../toolkit/tkhttp/README.md)。tkretry 仍为独立设计，本次未实现。
 
 ## 方案比较
 
@@ -31,7 +31,7 @@
 
 ## 公开 API
 
-以下签名用于约定接口，均为拟定 API：
+公开 API 如下：
 
 ```go
 func New(config Config, opts ...Option) (client *Client, err error)
@@ -84,7 +84,7 @@ Config 中不包含 Transport、HTTPClient、LogAcc 和 RequestHook 等运行期
 
 ### LogAcc 共享契约与实现适配
 
-以下声明计划放在 `adapter/log_acc.go`，仅依赖标准库 `context` 和 `time`：
+以下共享声明位于 `adapter/log_acc.go`，仅依赖标准库 `context` 和 `time`：
 
 ```go
 // LogAcc 定义累计字段和结构化打印的共享契约。
@@ -348,7 +348,7 @@ logx 适配实现通过当前起点提供可读耗时前缀，起点可在构造
 
 ## 使用示例
 
-以下代码展示拟定用法，实际包尚未创建。已有 Client 可直接省略请求配置，或按需覆盖本次超时：
+已有 Client 可直接省略请求配置，或按需覆盖本次超时：
 
 ```go
 response, err := client.Get(ctx, "health")
@@ -401,7 +401,7 @@ func fetchDevices(ctx context.Context, logAcc adapter.LogAcc) (result map[string
 
 调用边界还应验证：tkhttp 不导入 tkretry，配置无重试参数；状态错误、网络错误或读取失败都直接返回，不重新调用底层客户端；日志字段无跨调用尝试统计。
 
-按全局工作流，新增测试需要另行获得用户允许。获准后仅采用 `httptest` 或自定义 RoundTripper，覆盖取消、单次发送、URL 解析、资源关闭、日志数量和调用位置，并对受影响的 `adapter`、`logx` 和 `tkhttp` 包运行 race 与 vet 检查，不连接真实平台或运行整个仓库集成测试。本次仅修改设计文档，不编写或执行新增测试。
+用户已批准补充相关测试。验证采用 `httptest`、自定义 RoundTripper 和日志适配实现，覆盖取消、单次发送、URL 解析、资源关闭、日志数量和调用位置；仅对受影响的 `adapter`、`logx` 和 `tkhttp` 包运行 race 与 vet 检查，不连接真实平台或运行整个仓库集成测试。
 
 ## 参考
 

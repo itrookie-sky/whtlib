@@ -7,10 +7,12 @@ A lightweight, framework-independent Go library providing reusable core componen
 ```text
 whtlib/
 ├── adapter/      # 供多个包复用的通用适配契约
-│   └── logger.go # 与 logx 打印方法一致的 Logger 接口
+│   ├── logger.go # 与 logx 打印方法一致的 Logger 接口
+│   └── log_acc.go # 可克隆、可设置计时起点的 LogAcc 接口
 ├── toolkit/      # 独立、通用、框架无关的组件，包名使用 tk 前缀
 │   ├── tkaes/    # AES 加解密与编码工具
 │   ├── tkcache/  # 内存、Redis 与文件字节缓存、文本/JSON、回源合并
+│   ├── tkhttp/   # 单次 HTTP 调用、标准库连接池、签名钩子与累计日志
 │   ├── tkredis/  # Redis 命令、Lua、集合及租约锁
 │   ├── tksign/   # 多格式公私钥解析、RSA/ECDSA/Ed25519 签名验签
 │   ├── tktoken/  # 会话、旧 token 协议、标准 HTTP 中间件
@@ -43,6 +45,12 @@ whtlib/
 组件可选注入现有非泛型 `adapter.Logger`，包含 `Skip(n) Logger`、Debug/Info/Warn/Error 及四个格式化方法。普通参数按空格拼接正文；接口不包含 Log、SetConfig 或 Close。adapter 仅依赖标准库，日志配置与生命周期由调用方管理。
 
 接入具体日志库时需满足完整方法签名。当前 `logx.Logger.Skip` 返回 `*logx.Logger`，需要调用方提供包装器转换为 `adapter.Logger` 的返回类型；Go 接口不支持返回类型协变。
+
+累计结构化字段使用独立的 `adapter.LogAcc`，包含 Clone、SetStartTime、字段更新和四种打印方法。`logx.NewLogAccAdapter(...)` 提供现成适配，日志后端仍由调用方管理。
+
+## HTTP 客户端
+
+[tkhttp 使用说明](toolkit/tkhttp/README.md)：Config 管理基本参数，With 选项注入标准库连接池、客户端、累计日志和签名钩子；请求配置可省略，支持 JSON/表单/字节正文、响应大小限制与可选解码。每次调用最多执行一次 `http.Client.Do` 并打印一条汇总日志，不提供重试能力。
 
 ## 签名验签
 

@@ -41,7 +41,28 @@ func WithLogger(logger *Logger) (op LogAccOptionFunc) {
 
 // WithCost 设置计时起点，打印时在消息前附加耗时；零时间不启用计时。
 func WithCost(start time.Time) (op LogAccOptionFunc) {
-	return func(acc *LogAcc) { acc.start = start }
+	return func(acc *LogAcc) { acc.SetStartTime(start) }
+}
+
+// SetStartTime 修改打印耗时的起点；零时间关闭耗时前缀。
+func (a *LogAcc) SetStartTime(start time.Time) (acc *LogAcc) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.start = start
+	return a
+}
+
+// Clone 复制字段、起点和 Skip 设置，使用独立的映射和锁，复用日志后端。
+// 引用类型的字段值仍由调用方保证同步，不复制或关闭借用的 Logger。
+func (a *LogAcc) Clone() (acc *LogAcc) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return &LogAcc{
+		fields: maps.Clone(a.fields),
+		logger: a.logger,
+		start:  a.start,
+		skip:   a.skip,
+	}
 }
 
 // SetValue 覆盖单个字段，返回原累积器。
