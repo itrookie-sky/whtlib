@@ -15,19 +15,23 @@ import (
 	"testing"
 	"time"
 
+	"github.com/itrookie-sky/whtlib/adapter"
 	"github.com/itrookie-sky/whtlib/extension/logx"
 )
 
-func TestLogTemplateCloneIsolationAndRedaction(t *testing.T) {
+func TestLogFactoryIsolationAndRedaction(t *testing.T) {
 	acc := newRecordingAcc()
-	acc.SetValue("component", "original").SetValue("http", "stale").SetValue("biz", "stale")
 	transport := roundTripFunc(func(request *http.Request) (response *http.Response, err error) {
 		return nativeResponse(200, "private-response"), nil
 	})
 	config := quietConfig()
 	config.DisableLog = false
-	client := mustClient(t, config, WithLogAcc(acc), WithHTTPClient(&http.Client{Transport: transport}))
-	acc.SetValue("component", "external mutation").SetStartTime(time.Now().Add(-time.Hour))
+	client := mustClient(t, config, WithLogAcc(func() (instance adapter.LogAcc) {
+		return acc.newAcc().SetValue("component", "original").SetValue("http", "stale").SetValue("biz", "stale")
+	}), WithHTTPClient(&http.Client{Transport: transport}))
+	if acc.sink.creates.Load() != 0 {
+		t.Fatal("New must not call the log factory")
+	}
 	before := time.Now()
 	nested := map[string]any{"items": []string{"original"}, "bytes": []byte("original")}
 	fields := map[string]any{"nested": nested, "http": "business"}
@@ -46,8 +50,8 @@ func TestLogTemplateCloneIsolationAndRedaction(t *testing.T) {
 		t.Fatal(err)
 	}
 	records := acc.sink.records
-	if len(records) != 2 || acc.sink.clones.Load() != 3 || acc.sink.starts.Load() != 3 {
-		t.Fatalf("records=%d clones=%d starts=%d", len(records), acc.sink.clones.Load(), acc.sink.starts.Load())
+	if len(records) != 2 || acc.sink.creates.Load() != 2 || acc.sink.starts.Load() != 2 {
+		t.Fatalf("records=%d creates=%d starts=%d", len(records), acc.sink.creates.Load(), acc.sink.starts.Load())
 	}
 	for _, record := range records {
 		if record.start.Before(before) || record.level != "info" || record.ctx.Value(traceKey{}) != "trace-123" || record.fields["component"] != "original" || record.skip != 3 {
@@ -98,7 +102,7 @@ func TestLogsForErrorsAndCancellation(t *testing.T) {
 			})
 			config := quietConfig()
 			config.DisableLog = false
-			client := mustClient(t, config, WithLogAcc(acc), WithHTTPClient(&http.Client{Transport: transport}))
+			client := mustClient(t, config, WithLogAcc(acc.newAcc), WithHTTPClient(&http.Client{Transport: transport}))
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
 			if tc.cancel {
@@ -130,10 +134,10 @@ func TestLogsForErrorsAndCancellation(t *testing.T) {
 	}
 }
 
-func TestInvalidCloneAndDisabledLogging(t *testing.T) {
+func TestInvalidFactoryResultAndDisabledLogging(t *testing.T) {
 	for _, typedNil := range []bool{false, true} {
 		acc := newRecordingAcc()
-		acc.sink.failAt = 2
+		acc.sink.failAt = 1
 		acc.sink.typedNil = typedNil
 		var calls atomic.Int32
 		transport := roundTripFunc(func(request *http.Request) (response *http.Response, err error) {
@@ -142,18 +146,21 @@ func TestInvalidCloneAndDisabledLogging(t *testing.T) {
 		})
 		config := quietConfig()
 		config.DisableLog = false
-		client := mustClient(t, config, WithLogAcc(acc), WithHTTPClient(&http.Client{Transport: transport}))
+		client := mustClient(t, config, WithLogAcc(acc.newAcc), WithHTTPClient(&http.Client{Transport: transport}))
+		if acc.sink.creates.Load() != 0 {
+			t.Fatal("New must only validate the factory, not create an instance")
+		}
 		_, err := client.Get(t.Context(), "resource")
 		if !errors.Is(err, ErrLogAcc) || calls.Load() != 0 || len(acc.sink.records) != 0 {
-			t.Fatalf("invalid clone executed request: %v", err)
+			t.Fatalf("invalid factory result executed request: %v", err)
 		}
 	}
 	acc := newRecordingAcc()
 	acc.sink.failAt = 1
 	transport := roundTripFunc(func(request *http.Request) (response *http.Response, err error) { return nativeResponse(200, ""), nil })
-	client := mustClient(t, quietConfig(), WithLogAcc(acc), WithHTTPClient(&http.Client{Transport: transport}))
+	client := mustClient(t, quietConfig(), WithLogAcc(acc.newAcc), WithHTTPClient(&http.Client{Transport: transport}))
 	_, err := client.Get(t.Context(), "resource")
-	if err != nil || acc.sink.clones.Load() != 0 || acc.sink.starts.Load() != 0 || len(acc.sink.records) != 0 {
+	if err != nil || acc.sink.creates.Load() != 0 || acc.sink.starts.Load() != 0 || len(acc.sink.records) != 0 {
 		t.Fatal("disabled logs touched injected accumulator")
 	}
 }
@@ -165,7 +172,7 @@ func TestConcurrentRequestsKeepLogFieldsIndependent(t *testing.T) {
 	})
 	config := quietConfig()
 	config.DisableLog = false
-	client := mustClient(t, config, WithLogAcc(acc), WithHTTPClient(&http.Client{Transport: transport}))
+	client := mustClient(t, config, WithLogAcc(acc.newAcc), WithHTTPClient(&http.Client{Transport: transport}))
 	var wg sync.WaitGroup
 	for id := range 32 {
 		wg.Go(func() {
@@ -184,8 +191,8 @@ func TestConcurrentRequestsKeepLogFieldsIndependent(t *testing.T) {
 		}
 		ids[id] = true
 	}
-	if len(ids) != 32 || acc.sink.clones.Load() != 33 {
-		t.Fatal("lost requests or unexpected Clone count")
+	if len(ids) != 32 || acc.sink.creates.Load() != 32 {
+		t.Fatal("lost requests or unexpected factory call count")
 	}
 }
 
@@ -202,7 +209,9 @@ func TestLogxIntegrationCallerAndTrace(t *testing.T) {
 	})
 	config := quietConfig()
 	config.DisableLog = false
-	client := mustClient(t, config, WithLogAcc(logx.NewLogAccAdapter(logx.WithLogger(logger))), WithHTTPClient(&http.Client{Transport: transport}))
+	client := mustClient(t, config, WithLogAcc(func() (acc adapter.LogAcc) {
+		return logx.NewLogAccAdapter(logx.WithLogger(logger))
+	}), WithHTTPClient(&http.Client{Transport: transport}))
 	ctx := context.WithValue(t.Context(), traceKey{}, "trace-http")
 	_, file, doLine, _ := runtime.Caller(0)
 	_, err = client.Do(ctx, "GET", "resource")

@@ -11,7 +11,9 @@
 ```go
 client, err := tkhttp.New(
     tkhttp.Config{BaseURL: "https://api.example.com/v1/"},
-    tkhttp.WithLogAcc(logx.NewLogAccAdapter(logx.WithCost(time.Now()))),
+    tkhttp.WithLogAcc(func() (acc adapter.LogAcc) {
+        return logx.NewLogAccAdapter(logx.WithCost(time.Now()))
+    }),
 )
 if err != nil {
     return err
@@ -37,7 +39,7 @@ if err != nil {
 }
 ```
 
-不需要日志时使用 `Config{BaseURL: baseURL, DisableLog: true}`，可省略 WithLogAcc。默认开启日志，缺少有效模板时 New 返回 `ErrInvalidConfig`。
+不需要日志时使用 `Config{BaseURL: baseURL, DisableLog: true}`，可省略 WithLogAcc。默认开启日志，缺少非 nil 工厂时 New 返回 `ErrInvalidConfig`。
 
 | Config 字段 | 默认值和规则 |
 | --- | --- |
@@ -91,20 +93,25 @@ CloseIdleConnections 仅作用于自建池，借用池时为空操作，不取�
 
 ## 累计日志
 
-`adapter.LogAcc` 是共享契约，`tkhttp` 不导入具体日志实现。`logx.NewLogAccAdapter(opts...)` 可直接创建适配实例，也可注入其他满足契约且支持独立 Clone 的实现。
+`adapter.LogAcc` 是共享契约，`tkhttp` 不导入具体日志实现。`logx.NewLogAccAdapter(opts...)` 可创建适配实例，也可注入其他满足契约的实现。接口和具体 LogAcc 都不提供 Clone，每次调用由工厂创建新实例。
 
 ```go
-template := logx.NewLogAccAdapter(logx.WithLogger(logger), logx.WithCost(time.Now()))
-template.SetStartTime(time.Now()).SetValue("component", "deviceAPI")
+var factory tkhttp.LogAccFactory = func() (acc adapter.LogAcc) {
+    acc = logx.NewLogAccAdapter(logx.WithLogger(logger), logx.WithCost(time.Now()))
+    return acc.SetValue("component", "deviceAPI")
+}
+// 初始化时通过 tkhttp.WithLogAcc(factory) 注入。
 ```
 
-New 先克隆注入模板，每次调用再克隆一次并设置本次入口时间，不声明 Factory 函数类型。每次调用独立累计 `http` 元数据和 `biz` 业务字段，在统一出口只调用一次 Info/Warn/Error。成功用 Info，3xx/4xx 和主动取消用 Warn，其他失败用 Error；参数错误同样记录，初始化错误由调用方处理。
+`LogAccFactory` 的签名为 `func() (acc adapter.LogAcc)`，仅供 tkhttp 使用，声明在本包中。New 校验工厂非 nil，不调用工厂；每次 HTTP 调用执行一次工厂，再通过 SetStartTime 设置本次入口时间。工厂必须支持并发调用，并返回字段、起点和 Skip 均独立的新累加器，可以共享日志后端。
 
-`http` 包含 method、脱敏 url（仅 scheme/host/path）、statusCode、requestBytes、responseBytes、costMs、phase、errorKind。默认不记录 query 值、请求/响应正文、Header、鉴权值或原始错误文本。业务字段仅放入 biz，不覆盖内置 http 组。trace 等 context 字段由注入实现提取，取消后仍传原 context 打印。不得通过业务字段或模板字段写入不希望输出的数据。
+每次调用独立累计 `http` 元数据和 `biz` 业务字段，在统一出口只调用一次 Info/Warn/Error。成功用 Info，3xx/4xx 和主动取消用 Warn，其他失败用 Error；参数错误同样记录，初始化错误由调用方处理。
 
-容器在调用时复制；LogFields 的嵌套 map、slice、array 也复制。指针、结构体中的引用对象和 JSON 输入仍需由调用方保证调用期间不变，同一个 Result 不能被并发写入。LogAcc.Clone 自身为字段 map 的浅拷贝，模板中的引用值应保持不变。
+`http` 包含 method、脱敏 url（仅 scheme/host/path）、statusCode、requestBytes、responseBytes、costMs、phase、errorKind。默认不记录 query 值、请求/响应正文、Header、鉴权值或原始错误文本。业务字段仅放入 biz，不覆盖内置 http 组。trace 等 context 字段由注入实现提取，取消后仍传原 context 打印。不得通过业务字段或工厂设置的公共字段写入不希望输出的数据。
 
-关闭日志时不克隆或设置模板。Clone 返回 nil/typed nil 时返回 `ErrLogAcc` 且不发网络请求；该情况下没有有效累加器可打印。调用方或实现 panic、日志后端写入失败不属于正常返回时一次输出调用的保证。
+容器在调用时复制；LogFields 的嵌套 map、slice、array 也复制。指针、结构体中的引用对象和 JSON 输入仍需由调用方保证调用期间不变，同一个 Result 不能被并发写入。工厂设置的公共字段若引用可变对象，也需自行保证同步。
+
+关闭日志时不调用工厂或设置起点。显式传入 nil 工厂仍视为配置错误；工厂返回 nil/typed nil 时，请求返回 `ErrLogAcc` 且不发网络请求，此时没有有效累加器可打印。调用方、工厂或实现 panic、日志后端写入失败不属于正常返回时一次输出调用的保证。
 
 ## 签名钩子
 

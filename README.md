@@ -8,7 +8,7 @@ A lightweight, framework-independent Go library providing reusable core componen
 whtlib/
 ├── adapter/      # 供多个包复用的通用适配契约
 │   ├── logger.go # 与 logx 打印方法一致的 Logger 接口
-│   └── log_acc.go # 可克隆、可设置计时起点的 LogAcc 接口
+│   └── log_acc.go # 累计字段、计时与结构化打印的 LogAcc 接口
 ├── toolkit/      # 独立、通用、框架无关的组件，包名使用 tk 前缀
 │   ├── tkaes/    # AES 加解密与编码工具
 │   ├── tkcache/  # 内存、Redis 与文件字节缓存、文本/JSON、回源合并
@@ -46,7 +46,7 @@ whtlib/
 
 接入具体日志库时需满足完整方法签名。当前 `logx.Logger.Skip` 返回 `*logx.Logger`，需要调用方提供包装器转换为 `adapter.Logger` 的返回类型；Go 接口不支持返回类型协变。
 
-累计结构化字段使用独立的 `adapter.LogAcc`，包含 Clone、SetStartTime、字段更新和四种打印方法。`logx.NewLogAccAdapter(...)` 提供现成适配，日志后端仍由调用方管理。
+累计结构化字段使用独立的 `adapter.LogAcc`，包含 SetStartTime、字段更新和四种打印方法。`logx.NewLogAccAdapter(...)` 提供现成适配，日志后端仍由调用方管理。tkhttp 通过 `LogAccFactory` 在每次调用创建新累加器，LogAcc 不提供 Clone。
 
 ## HTTP 客户端
 

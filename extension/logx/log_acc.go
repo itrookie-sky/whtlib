@@ -52,19 +52,6 @@ func (a *LogAcc) SetStartTime(start time.Time) (acc *LogAcc) {
 	return a
 }
 
-// Clone 复制字段、起点和 Skip 设置，使用独立的映射和锁，复用日志后端。
-// 引用类型的字段值仍由调用方保证同步，不复制或关闭借用的 Logger。
-func (a *LogAcc) Clone() (acc *LogAcc) {
-	a.mu.RLock()
-	defer a.mu.RUnlock()
-	return &LogAcc{
-		fields: maps.Clone(a.fields),
-		logger: a.logger,
-		start:  a.start,
-		skip:   a.skip,
-	}
-}
-
 // SetValue 覆盖单个字段，返回原累积器。
 func (a *LogAcc) SetValue(key string, value any) (acc *LogAcc) {
 	a.mu.Lock()

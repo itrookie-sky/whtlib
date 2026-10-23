@@ -53,7 +53,7 @@ type logRecord struct {
 type logSink struct {
 	mu       sync.Mutex
 	records  []logRecord
-	clones   atomic.Int32
+	creates  atomic.Int32
 	starts   atomic.Int32
 	failAt   int32
 	typedNil bool
@@ -67,20 +67,20 @@ type recordingAcc struct {
 	skip   int
 }
 
+var _ adapter.LogAcc = (*recordingAcc)(nil)
+
 func newRecordingAcc() (acc *recordingAcc) {
 	return &recordingAcc{sink: &logSink{}, fields: make(map[string]any)}
 }
 
-func (a *recordingAcc) Clone() (acc adapter.LogAcc) {
-	if a.sink.clones.Add(1) == a.sink.failAt {
+func (a *recordingAcc) newAcc() (acc adapter.LogAcc) {
+	if a.sink.creates.Add(1) == a.sink.failAt {
 		if a.sink.typedNil {
 			return (*recordingAcc)(nil)
 		}
 		return nil
 	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	return &recordingAcc{sink: a.sink, fields: maps.Clone(a.fields), start: a.start, skip: a.skip}
+	return &recordingAcc{sink: a.sink, fields: make(map[string]any)}
 }
 
 func (a *recordingAcc) SetStartTime(start time.Time) (acc adapter.LogAcc) {
@@ -142,13 +142,8 @@ func (a *recordingAcc) Error(ctx context.Context, message string, args ...any) {
 }
 
 func TestNewValidationAndDefaults(t *testing.T) {
-	badClone := newRecordingAcc()
-	badClone.sink.failAt = 1
-	typedClone := newRecordingAcc()
-	typedClone.sink.failAt = 1
-	typedClone.sink.typedNil = true
 	var nilTransport *http.Transport
-	var nilAcc *recordingAcc
+	var nilFactory LogAccFactory
 	cases := []struct {
 		name   string
 		config Config
@@ -170,9 +165,7 @@ func TestNewValidationAndDefaults(t *testing.T) {
 		{name: "typed nil transport", config: quietConfig(), opts: []Option{WithHTTPClient(&http.Client{Transport: nilTransport})}},
 		{name: "missing logger", config: Config{BaseURL: "https://example.com"}},
 		{name: "nil logger", config: quietConfig(), opts: []Option{WithLogAcc(nil)}},
-		{name: "typed nil logger", config: quietConfig(), opts: []Option{WithLogAcc(nilAcc)}},
-		{name: "nil initial clone", config: Config{BaseURL: "https://example.com"}, opts: []Option{WithLogAcc(badClone)}},
-		{name: "typed nil initial clone", config: Config{BaseURL: "https://example.com"}, opts: []Option{WithLogAcc(typedClone)}},
+		{name: "nil factory", config: quietConfig(), opts: []Option{WithLogAcc(nilFactory)}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -183,7 +176,7 @@ func TestNewValidationAndDefaults(t *testing.T) {
 		})
 	}
 	acc := newRecordingAcc()
-	client := mustClient(t, quietConfig(), nil, WithLogAcc(acc))
+	client := mustClient(t, quietConfig(), nil, WithLogAcc(acc.newAcc))
 	second := mustClient(t, quietConfig())
 	if client.config.Timeout != 10*time.Second || client.config.MaxResponseBytes != 8<<20 || client.ownedPool == nil || client.httpClient.Transport != client.ownedPool || client.ownedPool == second.ownedPool {
 		t.Fatal("invalid defaults or shared default pool")
@@ -192,7 +185,7 @@ func TestNewValidationAndDefaults(t *testing.T) {
 	if pool.MaxIdleConns != 100 || pool.MaxIdleConnsPerHost != 0 || pool.MaxConnsPerHost != 0 || !pool.ForceAttemptHTTP2 || pool.IdleConnTimeout != 90*time.Second || pool.TLSHandshakeTimeout != 10*time.Second || pool.ExpectContinueTimeout != time.Second || pool.Proxy == nil || pool.DialContext == nil {
 		t.Fatal("default pool differs from documented baseline")
 	}
-	if acc.sink.clones.Load() != 0 || acc.sink.starts.Load() != 0 {
+	if acc.sink.creates.Load() != 0 || acc.sink.starts.Load() != 0 {
 		t.Fatal("disabled logging touched accumulator")
 	}
 }

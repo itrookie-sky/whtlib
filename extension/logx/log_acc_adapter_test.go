@@ -13,25 +13,19 @@ import (
 	"time"
 )
 
-func TestLogAccCloneAndStartTime(t *testing.T) {
+func TestLogAccNewInstanceAndStartTime(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
 	start := time.Now().Add(-time.Second)
-	original := NewLogAcc(WithLogger(logger), WithCost(start)).SetValue("source", "original").Skip(2)
-	clone := original.Clone()
-	clone.SetValue("source", "clone").SetValue("onlyClone", true).SetStartTime(time.Time{}).Skip(1)
-	fields, backend, originStart, skip := original.snapshot(nil)
-	if fields["source"] != "original" || len(fields) != 1 || backend != logger || originStart != start || skip != 2 {
-		t.Fatalf("original changed: %v, %v, %d", fields, originStart, skip)
+	first := NewLogAcc(WithLogger(logger), WithCost(start)).SetValue("source", "first").Skip(2)
+	second := NewLogAcc(WithLogger(logger)).SetValue("source", "second").Skip(1)
+	fields, backend, firstStart, skip := first.snapshot(nil)
+	if fields["source"] != "first" || len(fields) != 1 || backend != logger || firstStart != start || skip != 2 {
+		t.Fatalf("first instance changed: %v, %v, %d", fields, firstStart, skip)
 	}
-	fields, backend, cloneStart, skip := clone.snapshot(nil)
-	if fields["source"] != "clone" || len(fields) != 2 || backend != logger || !cloneStart.IsZero() || skip != 3 {
-		t.Fatalf("invalid clone: %v, %v, %d", fields, cloneStart, skip)
-	}
-	var zero LogAcc
-	zero.Clone().SetValue("zero", true)
-	if len(zero.fields) != 0 {
-		t.Fatal("zero-value clone modified source")
+	fields, backend, secondStart, skip := second.snapshot(nil)
+	if fields["source"] != "second" || len(fields) != 1 || backend != logger || !secondStart.IsZero() || skip != 1 {
+		t.Fatalf("second instance shared state: %v, %v, %d", fields, secondStart, skip)
 	}
 	acc := NewLogAcc(WithLogger(logger))
 	if acc.SetStartTime(start) != acc {
@@ -48,7 +42,7 @@ func TestLogAccCloneAndStartTime(t *testing.T) {
 	}
 }
 
-func TestLogAccAdapterCloneCallerAndChain(t *testing.T) {
+func TestLogAccAdapterCallerAndChain(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{Level: slog.LevelDebug})
 	acc := NewLogAccAdapter(WithLogger(logger))
@@ -58,9 +52,6 @@ func TestLogAccAdapterCloneCallerAndChain(t *testing.T) {
 	err := errors.New("example")
 	if acc.SetErr(&err) != acc {
 		t.Fatal("SetErr must return receiver")
-	}
-	for range 5 {
-		acc = acc.Clone()
 	}
 	_, file, line, _ := runtime.Caller(0)
 	acc.Info(t.Context(), "adapted")
@@ -76,17 +67,17 @@ func TestLogAccAdapterCloneCallerAndChain(t *testing.T) {
 	}
 }
 
-func TestLogAccConcurrentCloneStartAndOutput(t *testing.T) {
+func TestLogAccConcurrentStartAndOutput(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
-	acc := NewLogAccAdapter(WithLogger(logger))
+	acc := NewLogAcc(WithLogger(logger))
 	var wg sync.WaitGroup
 	for worker := range 4 {
 		wg.Go(func() {
 			for range 20 {
 				acc.SetStartTime(time.Now()).SetValue("worker", worker)
-				clone := acc.Clone()
-				clone.SetStartTime(time.Time{}).Info(t.Context(), "clone")
+				requestAcc := NewLogAcc(WithLogger(logger))
+				requestAcc.SetStartTime(time.Time{}).Info(t.Context(), "request")
 				acc.Info(t.Context(), "source")
 			}
 		})

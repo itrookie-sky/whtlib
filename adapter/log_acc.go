@@ -6,11 +6,9 @@ import (
 )
 
 // LogAcc 定义累计字段和结构化打印的共享契约。
-// 实现应支持并发操作；Clone 复制字段映射和计时状态，使用独立的锁。
+// 实现应支持并发操作；独立调用的累加器由使用方通过构造函数创建。
 // 字段值中的引用对象由调用方同步，日志后端的生命周期由注入方管理。
 type LogAcc interface {
-	// Clone 创建独立的累加器，保留后端和 Skip 设置。
-	Clone() (acc LogAcc)
 	// SetStartTime 设置打印耗时的起点；零时间关闭耗时前缀。
 	SetStartTime(start time.Time) (acc LogAcc)
 	// SetValue 覆盖单个字段并返回同一累加器。

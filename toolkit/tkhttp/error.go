@@ -14,7 +14,7 @@ var (
 	ErrResponseTooLarge = errors.New("tkhttp: response too large")
 	// ErrRequestHook 表示签名或鉴权钩子失败。
 	ErrRequestHook = errors.New("tkhttp: request hook failed")
-	// ErrLogAcc 表示请求日志模板不能克隆有效累加器。
+	// ErrLogAcc 表示日志创建函数返回 nil 或 typed nil 累加器。
 	ErrLogAcc = errors.New("tkhttp: invalid log accumulator")
 )
 

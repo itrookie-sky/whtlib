@@ -6,19 +6,17 @@ import (
 	"net/http"
 	"net/url"
 	"time"
-
-	"github.com/itrookie-sky/whtlib/adapter"
 )
 
 // Client 固定配置并复用连接池，支持并发调用；应通过 New 创建。
 // 不提供重试能力，每次调用最多执行一次 http.Client.Do。
 type Client struct {
-	config     Config          // 归一化后的私有默认配置。
-	baseURL    *url.URL        // 已校验的基础地址。
-	httpClient *http.Client    // 仅复制公开配置的私有客户端。
-	ownedPool  *http.Transport // 非 nil 表示连接池由当前 Client 创建。
-	logAcc     adapter.LogAcc  // 内部固定模板，每次调用克隆。
-	hook       RequestHook     // 初始化后固定的请求头钩子。
+	config        Config          // 归一化后的私有默认配置。
+	baseURL       *url.URL        // 已校验的基础地址。
+	httpClient    *http.Client    // 仅复制公开配置的私有客户端。
+	ownedPool     *http.Transport // 非 nil 表示连接池由当前 Client 创建。
+	logAccFactory LogAccFactory   // 每次调用创建独立累加器。
+	hook          RequestHook     // 初始化后固定的请求头钩子。
 }
 
 // New 复制配置、补齐默认值并校验依赖；不主动建立网络连接。
@@ -41,8 +39,8 @@ func New(config Config, opts ...Option) (client *Client, err error) {
 		err = invalidConfig("WithHTTPClient requires a non-nil client")
 		return
 	}
-	if selected.logAccSet && isNil(selected.logAcc) || !config.DisableLog && isNil(selected.logAcc) {
-		err = invalidConfig("WithLogAcc requires a non-nil accumulator when logging is enabled")
+	if (selected.logAccSet || !config.DisableLog) && selected.logAccFactory == nil {
+		err = invalidConfig("WithLogAcc requires a non-nil factory when logging is enabled")
 		return
 	}
 	native := &http.Client{
@@ -62,26 +60,18 @@ func New(config Config, opts ...Option) (client *Client, err error) {
 		err = invalidConfig("selected Transport must not be typed nil")
 		return
 	}
-	var template adapter.LogAcc
-	if !config.DisableLog {
-		template = selected.logAcc.Clone()
-		if isNil(template) {
-			err = invalidConfig("LogAcc.Clone returned an invalid accumulator")
-			return
-		}
-	}
 	var owned *http.Transport
 	if native.Transport == nil {
 		owned = newDefaultPool()
 		native.Transport = owned
 	}
 	client = &Client{
-		config:     config,
-		baseURL:    baseURL,
-		httpClient: native,
-		ownedPool:  owned,
-		logAcc:     template,
-		hook:       selected.hook,
+		config:        config,
+		baseURL:       baseURL,
+		httpClient:    native,
+		ownedPool:     owned,
+		logAccFactory: selected.logAccFactory,
+		hook:          selected.hook,
 	}
 	return
 }
@@ -132,7 +122,7 @@ func (c *Client) do(ctx context.Context, method, target string, configs []Reques
 		return
 	}
 	if !c.config.DisableLog {
-		state.acc = c.logAcc.Clone()
+		state.acc = c.logAccFactory()
 		if isNil(state.acc) {
 			err = state.failure(ErrLogAcc)
 			return

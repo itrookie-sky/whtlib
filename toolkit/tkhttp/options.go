@@ -6,14 +6,18 @@ import (
 	"github.com/itrookie-sky/whtlib/adapter"
 )
 
+// LogAccFactory 为每次调用创建独立的日志累加器。
+// 工厂应支持并发调用，不复用累加器；日志后端可共享，由调用方管理。
+type LogAccFactory func() (acc adapter.LogAcc)
+
 type options struct {
-	transport    *http.Transport // 借用的显式标准库连接池。
-	transportSet bool            // 区分未注入与显式 nil。
-	httpClient   *http.Client    // 借用其公开配置，不复制内部状态。
-	clientSet    bool            // 区分未注入与显式 nil。
-	logAcc       adapter.LogAcc  // 只在构造时克隆为客户端内部模板。
-	logAccSet    bool            // 显式 nil 即使关闭日志也视为配置错误。
-	hook         RequestHook     // 可选签名或鉴权请求头钩子。
+	transport     *http.Transport // 借用的显式标准库连接池。
+	transportSet  bool            // 区分未注入与显式 nil。
+	httpClient    *http.Client    // 借用其公开配置，不复制内部状态。
+	clientSet     bool            // 区分未注入与显式 nil。
+	logAccFactory LogAccFactory   // 每次调用创建独立累加器，不共享字段、起点或 Skip。
+	logAccSet     bool            // 显式 nil 即使关闭日志也视为配置错误。
+	hook          RequestHook     // 可选签名或鉴权请求头钩子。
 }
 
 // Option 注入可选依赖，同类选项以后一次为准；nil 选项忽略。
@@ -37,11 +41,12 @@ func WithHTTPClient(client *http.Client) (option Option) {
 	}
 }
 
-// WithLogAcc 注入支持独立 Clone 的日志模板，不接管日志后端生命周期。
-// 日志开启时必填；nil 和 typed nil 无效，关闭日志时不执行 Clone。
-func WithLogAcc(logAcc adapter.LogAcc) (option Option) {
+// WithLogAcc 注入日志创建函数，每次调用返回一个独立累加器。
+// 日志开启时必填，显式 nil 无效；New 和关闭日志时不调用创建函数。
+// 工厂应支持并发调用；日志后端由调用方管理。
+func WithLogAcc(factory LogAccFactory) (option Option) {
 	return func(opts *options) {
-		opts.logAcc = logAcc
+		opts.logAccFactory = factory
 		opts.logAccSet = true
 	}
 }

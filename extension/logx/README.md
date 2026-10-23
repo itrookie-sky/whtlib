@@ -196,19 +196,21 @@ defer acc.SetErr(&err) // defer 逆序执行，先保存最终错误再打印。
 开始时间也可在创建后通过 `SetStartTime(start)` 修改，传入零时间关闭耗时前缀。修改起点与字段快照受同一把锁保护，可与打印并发执行。
 
 ```go
-template := logx.NewLogAcc(logx.WithLogger(logger), logx.WithCost(time.Now()))
-requestAcc := template.Clone().SetStartTime(time.Now())
+requestAcc := logx.NewLogAcc(logx.WithLogger(logger), logx.WithCost(time.Now()))
+requestAcc.SetStartTime(time.Now())
 requestAcc.SetValue("requestId", "r1").Info(ctx, "处理完成")
 ```
 
-`Clone()` 返回新的 `*LogAcc`，复制字段 map、起点和 Skip，使用新的锁并复用同一日志后端。修改克隆字段或起点不影响模板；字段 map 内的引用值仍由调用方同步，模板中的这些值应保持不变。
+LogAcc 不提供 Clone。每次调用通过 NewLogAcc 或 NewLogAccAdapter 创建新累加器，字段 map、起点和 Skip 各自独立；可以共享同一日志后端。
 
-多个组件通过 `adapter.LogAcc` 注入时，可使用 `logx.NewLogAccAdapter(opts...)`，支持相同的 WithLogger/WithCost，以及 Clone、SetStartTime 和原有链式方法。私有包装仅补偿自身一层调用栈，重复 Clone 不增加 Skip；旧 NewLogAcc 与具体链式返回类型保持兼容。
+多个组件通过 `adapter.LogAcc` 注入时，可使用 `logx.NewLogAccAdapter(opts...)`，支持相同的 WithLogger/WithCost、SetStartTime 和原有链式方法。私有包装仅补偿自身一层调用栈；NewLogAcc 与具体链式返回类型保持兼容。
 
 ```go
-acc := logx.NewLogAccAdapter(logx.WithLogger(logger), logx.WithCost(time.Now()))
-acc.SetStartTime(time.Now()).SetValue("component", "http")
-// 可直接传给 tkhttp.WithLogAcc(acc)。
+factory := func() (acc adapter.LogAcc) {
+    acc = logx.NewLogAccAdapter(logx.WithLogger(logger), logx.WithCost(time.Now()))
+    return acc.SetValue("component", "http")
+}
+// 可通过 tkhttp.WithLogAcc(factory) 注入，每次调用都创建新实例。
 ```
 
-累积器不拥有 Logger，不需要 Close，也不会每次打印创建派生 Logger；注入实例由调用方负责关闭。零值 LogAcc 可用，默认使用全局 Logger。使用后不要按值复制 LogAcc 结构体，使用 Clone 创建新实例。并发安全范围是字段更新、起点、Skip 与快照，不包括字段值引用的可变对象；外部 map/slice/指针以及传给 SetErr 的 error 变量仍需调用方同步。快照完成后释放锁再编码、写入日志。
+累积器不拥有 Logger，不需要 Close，也不会每次打印创建派生 Logger；注入实例由调用方负责关闭。零值 LogAcc 可用，默认使用全局 Logger。使用后不要按值复制 LogAcc 结构体；需要独立累计时重新创建实例。并发安全范围是字段更新、起点、Skip 与快照，不包括字段值引用的可变对象；外部 map/slice/指针以及传给 SetErr 的 error 变量仍需调用方同步。快照完成后释放锁再编码、写入日志。

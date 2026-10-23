@@ -20,11 +20,6 @@ func NewLogAccAdapter(opts ...LogAccOptionFunc) (acc adapter.LogAcc) {
 	return &logAccAdapter{acc: NewLogAcc(opts...).Skip(1)}
 }
 
-func (a *logAccAdapter) Clone() (acc adapter.LogAcc) {
-	// 原实例已补偿包装层，克隆时不重复累加 Skip。
-	return &logAccAdapter{acc: a.acc.Clone()}
-}
-
 func (a *logAccAdapter) SetStartTime(start time.Time) (acc adapter.LogAcc) {
 	a.acc.SetStartTime(start)
 	return a
