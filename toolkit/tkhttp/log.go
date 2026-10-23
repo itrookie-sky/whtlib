@@ -39,7 +39,7 @@ func (s *requestLog) finish(ctx context.Context, response **Response, result *er
 			"statusCode":    status,
 			"requestBytes":  s.requestBytes,
 			"responseBytes": s.responseBytes,
-			"costMs":        time.Since(s.start).Milliseconds(),
+			"cost":          time.Since(s.start).String(),
 			"phase":         s.phase,
 			"errorKind":     errorKind(*result, s.phase),
 		},
