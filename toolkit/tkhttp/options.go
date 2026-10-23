@@ -2,6 +2,7 @@ package tkhttp
 
 import (
 	"net/http"
+	"slices"
 
 	"github.com/itrookie-sky/whtlib/adapter"
 )
@@ -18,9 +19,10 @@ type options struct {
 	logAccFactory LogAccFactory   // 每次调用创建独立累加器，不共享字段、起点或 Skip。
 	logAccSet     bool            // 显式 nil 即使关闭日志也视为配置错误。
 	hook          RequestHook     // 可选签名或鉴权请求头钩子。
+	middlewares   []Middleware    // 按注册顺序追加的完整调用层中间件。
 }
 
-// Option 注入可选依赖，同类选项以后一次为准；nil 选项忽略。
+// Option 注入可选依赖；单值选项以后一次为准，中间件追加，nil 选项忽略。
 type Option func(*options)
 
 // WithTransport 借用标准库连接池，优先于 WithHTTPClient 中的 Transport。
@@ -54,4 +56,11 @@ func WithLogAcc(factory LogAccFactory) (option Option) {
 // WithRequestHook 注入发送前执行一次的请求头钩子；nil 表示不使用钩子。
 func WithRequestHook(hook RequestHook) (option Option) {
 	return func(opts *options) { opts.hook = hook }
+}
+
+// WithMiddleware 按顺序追加完整调用层中间件，第一个位于最外层。
+// 列表在创建选项时复制；空列表保持原行为，nil 中间件使 New 返回 ErrInvalidConfig。
+func WithMiddleware(middlewares ...Middleware) (option Option) {
+	selected := slices.Clone(middlewares)
+	return func(opts *options) { opts.middlewares = append(opts.middlewares, selected...) }
 }

@@ -3,7 +3,6 @@ package tkhttp
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net/http"
 )
 
@@ -30,12 +29,12 @@ func (c *Client) applyHook(ctx context.Context, request *http.Request, body []by
 		Body:   bytes.Clone(body),
 	})
 	if err != nil {
-		err = errors.Join(ErrRequestHook, err)
+		err = withErrorKind(ErrRequestHook, err)
 		return
 	}
 	header, err = copyHeader(header)
 	if err != nil {
-		err = errors.Join(ErrRequestHook, err)
+		err = withErrorKind(ErrRequestHook, err)
 		return
 	}
 	for key, values := range header {

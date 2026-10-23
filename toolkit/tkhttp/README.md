@@ -1,6 +1,6 @@
 # tkhttp
 
-基于标准库 `net/http` 的 HTTP 客户端，支持可选请求配置、连接池注入、签名钩子、限额响应与一次调用一条累计日志。可并发复用，无第三方依赖。
+基于标准库 `net/http` 的 HTTP 客户端，支持可选请求配置、连接池注入、调用层中间件、签名钩子、限额响应与一次调用一条累计日志。可并发复用，无第三方依赖。
 
 每次调用最多执行一次 `http.Client.Do`，错误直接返回，不提供重试配置或依赖 `tkretry`。Transport 自身的连接处理沿用标准库语义。需要重试时由业务在外层显式组合独立组件；每次 tkhttp 调用分别计时和记录日志。
 
@@ -83,13 +83,47 @@ if err != nil {
 }
 ```
 
-WithTransport 直接持有原指针，不调用 Clone，多个 Client 可共享实际连接。优先级固定为显式 WithTransport、WithHTTPClient 中的 Transport、自建默认池。选项顺序不改变优先级；同类选项以后一次为准。显式 nil 客户端、nil 池和最终选中的 typed nil Transport 返回配置错误。
+WithTransport 直接持有原指针，不调用 Clone，多个 Client 可共享实际连接。优先级固定为显式 WithTransport、WithHTTPClient 中的 Transport、自建默认池。选项顺序不改变优先级；单值依赖选项以后一次为准，WithMiddleware 按顺序追加。显式 nil 客户端、nil 池和最终选中的 typed nil Transport 返回配置错误。
 
 未注入时，New 创建一个独立 `*http.Transport` 并供该 Client 所有请求复用，不依赖可被替换的全局 http.DefaultTransport。连接按需建立；默认采用环境代理，拨号和 TCP KeepAlive 30s，HTTP/2 协商开启，最大空闲连接 100，每主机空闲连接沿用标准库默认 2，单主机连接总数不限，空闲回收 90s、TLS 握手 10s、ExpectContinue 等待 1s。
 
 WithHTTPClient 只复制 Transport、Jar、Timeout 等公开配置，创建私有 http.Client；Transport 和 Jar 仍为借用资源。注入客户端的 Transport 为 nil 时创建默认池。借用的 native Timeout 仍可提前终止请求；CheckRedirect 固定被覆盖为不跟随重定向，3xx 作为状态错误返回。
 
 CloseIdleConnections 仅作用于自建池，借用池时为空操作，不取消正在执行的请求。注入池、Jar 和日志后端由调用方管理，投入使用后不要并发修改它们的配置。
+
+## 调用层中间件
+
+通过 WithMiddleware 注入完整调用层中间件，类型定义在 tkhttp 内。next 包含参数校验、请求编码、签名、发送、响应读取与关闭、状态检查和 JSON 解码，返回最终 Response/error。
+
+```go
+func observe(next tkhttp.Handler) (handler tkhttp.Handler) {
+    return func(ctx context.Context, method, target string, configs ...tkhttp.RequestConfig) (response *tkhttp.Response, err error) {
+        response, err = next(ctx, method, target, configs...)
+        if err != nil {
+            // 可通过 errors.Is/AsType 识别参数、读取、解码等错误。
+            err = fmt.Errorf("调用失败: %w", err)
+        }
+        // response 非 nil 时，StatusCode 即为本次 HTTP 状态码。
+        return
+    }
+}
+
+// 日志开启时同时注入 WithLogAcc；此处演示独立使用中间件。
+client, err := tkhttp.New(
+    tkhttp.Config{BaseURL: baseURL, DisableLog: true},
+    tkhttp.WithMiddleware(observe),
+)
+```
+
+不注入或传空列表时保持原流程，nil 中间件在 New 返回 ErrInvalidConfig。选项和 New 均复制中间件列表，不受调用方后续修改影响。多次 WithMiddleware 按顺序追加；注册 A、B 时，执行 A 前置、B 前置、核心调用、B 后置、A 后置，最后打印唯一的汇总日志。
+
+中间件包装函数在每次请求到达该层时执行，New 不调用它；适合轻量创建本次 Handler，共享资源应在创建 Middleware 时初始化。共享状态必须并发安全，每次调用的执行状态和 LogAcc 独立。
+
+中间件前置逻辑可以修改传给 next 的参数；修改 Header/Query/Body/LogFields 前应复制对应容器。修改后的参数仍需通过核心校验，签名钩子随后执行。原始 configs 数量、nil/typed nil context 等校验错误也会返回给 next 的调用方。
+
+允许提前返回错误或合成 Response。合成成功响应时核心不会执行网络、状态检查和 JSON 解码，中间件负责提供合法响应及 Result。返回 nil Handler、nil Response 且 nil error，或违反 next 调用约定时返回 ErrMiddleware。每层 next 必须同步且最多调用一次；重复、构造期间及返回后的调用被拒绝。若 Handler 返回时 next 仍在执行，会等待其结束并返回 ErrMiddleware，避免与最终日志竞争。中间件 panic 继续向上传播。
+
+用 %w 包装 next 的错误可保留错误链。汇总日志使用整条链最终返回的 Response/error，记录前后置总耗时；中间件消除或替换错误后，日志阶段和级别随最终结果更新。配置 Timeout 仍由核心按入口时间计算，中间件应配合传入的调用方 context；同步代码不能被强制中断。
 
 ## 累计日志
 
@@ -110,7 +144,7 @@ var factory tkhttp.LogAccFactory = func() (acc adapter.LogAcc) {
 
 每次调用独立累计 `http` 元数据和 `biz` 业务字段，在统一出口只调用一次 Info/Warn/Error。成功用 Info，3xx/4xx 和主动取消用 Warn，其他失败用 Error；参数错误同样记录，初始化错误由调用方处理。
 
-`http` 包含 method、脱敏 url（仅 scheme/host/path）、statusCode、requestBytes、responseBytes、costMs、phase、errorKind。默认不记录 query 值、请求/响应正文、Header、鉴权值或原始错误文本。业务字段仅放入 biz，不覆盖内置 http 组。trace 等 context 字段由注入实现提取，取消后仍传原 context 打印。不得通过业务字段或工厂设置的公共字段写入不希望输出的数据。
+`http` 包含 method、脱敏 url（仅 scheme/host/path）、statusCode、requestBytes、responseBytes、cost（可读耗时字符串）、phase、errorKind。默认不记录 query 值、请求/响应正文、Header、鉴权值或原始错误文本。业务字段仅放入 biz，不覆盖内置 http 组。trace 等 context 字段由注入实现提取，取消后仍传原 context 打印。不得通过业务字段或工厂设置的公共字段写入不希望输出的数据。
 
 容器在调用时复制；LogFields 的嵌套 map、slice、array 也复制。指针、结构体中的引用对象和 JSON 输入仍需由调用方保证调用期间不变，同一个 Result 不能被并发写入。工厂设置的公共字段若引用可变对象，也需自行保证同步。
 
@@ -140,7 +174,25 @@ hook := func(ctx context.Context, info tkhttp.RequestInfo) (headers http.Header,
 
 未收到响应时 Response 为 nil；读取或解码失败仍返回已取得的 Response。读取错误优先于状态错误。Result 使用 json.Unmarshal，拒绝尾随第二个 JSON 值；HEAD、204、205 不解码，其他成功状态在要求解码时遇到空正文会报错。解码失败可能部分写入 Result，不能视为完整结果。
 
-`*RequestError` 提供 Phase 和 Unwrap；用 `errors.Is` 判断 ErrInvalidRequest、ErrRequestHook、ErrResponseTooLarge、context.Canceled、context.DeadlineExceeded，用 `errors.AsType` 检查状态码或底层网络/JSON 原因。Error 文本保持受控，显式解包后应自行决定如何处理原始错误。
+Response.StatusCode 为收到的 HTTP 状态码，即使正文读取、超限或 JSON 解码失败也会保留；未收到响应时 Response 为 nil。非 2xx 同时返回 StatusError，可以通过 `errors.AsType[*tkhttp.StatusError](err)` 获取其中的 StatusCode。
+
+包级错误、自定义类型及包装助手统一声明在 [error.go](error.go)。`*RequestError` 提供 Phase 和 Unwrap；通过 errors.Is 判断稳定类别，通过 errors.AsType 获取状态码或底层网络/JSON 原因。Error 文本保持受控，显式解包后应自行决定如何处理原始错误。
+
+| 错误 | 含义 |
+| --- | --- |
+| ErrInvalidConfig | 客户端配置或注入依赖无效 |
+| ErrInvalidRequest | 请求参数校验失败 |
+| ErrRequestEncode | 请求正文编码失败 |
+| ErrRequestHook | 签名或鉴权钩子失败 |
+| ErrTransport | HTTP 发送失败 |
+| ErrResponseRead | 响应读取失败，包括超限 |
+| ErrResponseTooLarge | 超过响应读取限额，同时匹配 ErrResponseRead |
+| ErrHTTPStatus | 非 2xx，具体码在 StatusError/Response 中 |
+| ErrResponseDecode | JSON 解码失败 |
+| ErrLogAcc | 日志工厂返回 nil/typed nil |
+| ErrMiddleware | 中间件失败、无效结果或违反 next 约定 |
+
+取消和超时直接匹配 context.Canceled/context.DeadlineExceeded；所有封装保留底层原因。中间件自行返回的普通错误会归入 middleware 阶段，透传或通过 %w 包装的核心错误保留原阶段。
 
 组件总超时从调用入口计时，包含参数准备、签名、HTTP、读取和解码；父 context 更早截止时优先，精确 -1 不取消父时限或借用客户端的 Timeout。网络和连接池等待可取消，同步编码/解码或不配合 context 的钩子不能被强制中断，会在返回后检查取消状态。ctx 必须非 nil；无效 ctx 只在错误日志中使用 Background，不发起请求。
 

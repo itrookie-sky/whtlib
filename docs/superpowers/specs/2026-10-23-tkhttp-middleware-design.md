@@ -1,6 +1,6 @@
 # tkhttp 调用层中间件设计
 
-状态：方案待确认，尚未修改实现。
+状态：用户已批准执行，已按本设计实现；用法见 [tkhttp README](../../../toolkit/tkhttp/README.md)。
 
 ## 目标与范围
 
@@ -10,10 +10,11 @@
 
 ## 方案选择
 
-| 方案 | 能力与代价 | 结论 |
-| --- | --- | --- |
+
+| 方案                   | 能力与代价                                                               | 结论           |
+| ------------------------ | -------------------------------------------------------------------------- | ---------------- |
 | 包装 http.RoundTripper | 直接复用标准库类型，但看不到 tkhttp 的参数校验、响应读取和 JSON 解码错误 | 不满足本次范围 |
-| 包装 tkhttp 完整调用 | 能读取最终 Response 和 error，需要定义处理函数与中间件类型 | 本次采用 |
+| 包装 tkhttp 完整调用   | 能读取最终 Response 和 error，需要定义处理函数与中间件类型               | 本次采用       |
 
 ## 建议接口
 
@@ -50,27 +51,28 @@ client, err := tkhttp.New(
 
 核心调用依次执行：参数校验、合并默认配置、构造请求及编码正文、RequestHook、发送、限量读取并关闭响应、HTTP 状态检查、JSON 解码。中间件前置操作修改的请求参数会先经过校验，再进入签名钩子，避免在签名完成后修改待签名内容。
 
-建议在 New 时复制并冻结中间件列表，每次调用使用独立状态与终端闭包组装处理链，不向 context 写入可变内部状态。Middleware 包装函数每次调用执行，应只做轻量包装；长期共享资源应在创建 Middleware 时初始化，相关状态由实现保证并发安全。
+在创建 WithMiddleware 选项和 New 时复制中间件列表，每次调用使用独立状态与终端闭包组装处理链，不向 context 写入可变内部状态。Middleware 包装函数在请求到达该层时执行，应只做轻量包装；长期共享资源应在创建 Middleware 时初始化，相关状态由实现保证并发安全。
 
 ## 结果与错误
 
 中间件在 next 返回后能直接读取以下结果：
 
-| 结果 | 保持的现有语义 |
-| --- | --- |
-| 参数无效、配置数量超限、正文编码失败 | prepare 阶段的 RequestError |
-| 签名或鉴权钩子失败 | hook 阶段，保留 ErrRequestHook 和原始错误 |
-| 发送失败、取消或超时 | 对应阶段的 RequestError，保留 errors.Is 判断能力 |
-| 正文读取失败或超限 | read 阶段；可附带部分 Response，保留 ErrResponseTooLarge |
-| 非 2xx 响应 | StatusError，附带已读取的 Response |
-| JSON 解码失败 | decode 阶段；附带原始响应快照 |
-| 调用成功 | 非 nil Response 和 nil error |
+
+| 结果                                 | 保持的现有语义                                           |
+| -------------------------------------- | ---------------------------------------------------------- |
+| 参数无效、配置数量超限、正文编码失败 | prepare 阶段的 RequestError                              |
+| 签名或鉴权钩子失败                   | hook 阶段，保留 ErrRequestHook 和原始错误                |
+| 发送失败、取消或超时                 | 对应阶段的 RequestError，保留 errors.Is 判断能力         |
+| 正文读取失败或超限                   | read 阶段；可附带部分 Response，保留 ErrResponseTooLarge |
+| 非 2xx 响应                          | StatusError，附带已读取的 Response                       |
+| JSON 解码失败                        | decode 阶段；附带原始响应快照                            |
+| 调用成功                             | 非 nil Response 和 nil error                             |
 
 中间件应返回 next 的结果，或使用 %w 包装错误，保留 errors.Is/AsType 能力。中间件可以提前返回错误，中断后续执行。自造错误增加 ErrMiddleware 标识和 middleware 阶段，已有核心错误不重复改写阶段。
 
 中间件也可提前返回有效 Response；此时不执行网络请求、核心状态检查或 JSON 解码，中间件负责提供与调用约定一致的响应及 Result。返回 nil Response 且 error 为 nil 视为无效中间件结果，返回 ErrMiddleware。每层 next 约定最多调用一次且同步返回；不通过此能力增加 tkhttp 内置重试。
 
-中间件返回 nil Handler 属于运行期构造失败，返回 ErrMiddleware，不发请求。调用方或中间件 panic 沿用现有传播方式，不新增 recover。
+中间件返回 nil Handler 属于运行期构造失败，返回 ErrMiddleware，不发请求。每层 next 的构造期间、重复及返回后调用被拒绝；若 Handler 返回时 next 仍在执行，等待其结束后返回 ErrMiddleware，避免后台执行与最终日志竞争。调用方或中间件 panic 沿用现有传播方式，不新增 recover。
 
 ## 错误集中声明与封装
 
@@ -78,19 +80,20 @@ client, err := tkhttp.New(
 
 错误类别按调用方可以稳定判断和处理的边界划分，建议完整集合如下：
 
-| 哨兵错误 | 含义 |
-| --- | --- |
-| ErrInvalidConfig | 客户端配置或注入依赖无效，包括 nil 中间件 |
-| ErrInvalidRequest | 请求参数无效，包括配置数量、地址、请求头和输入冲突 |
-| ErrRequestEncode | 请求正文编码失败，保留具体编码错误 |
-| ErrRequestHook | 签名或鉴权钩子执行失败，保留原始原因 |
-| ErrTransport | 网络发送阶段失败，保留原始网络或 context 错误 |
-| ErrResponseRead | 响应读取失败，包括超出读取限额 |
-| ErrResponseTooLarge | 响应超过配置读取限额，同时归属 ErrResponseRead |
-| ErrHTTPStatus | HTTP 状态码非 2xx，具体状态码由 StatusError 提供 |
-| ErrResponseDecode | JSON 响应解码失败，保留具体 JSON 错误 |
-| ErrLogAcc | 工厂返回 nil/typed nil 日志累加器 |
-| ErrMiddleware | 中间件执行失败、返回 nil Handler、返回无效结果或违反调用约定 |
+
+| 哨兵错误            | 含义                                                         |
+| --------------------- | -------------------------------------------------------------- |
+| ErrInvalidConfig    | 客户端配置或注入依赖无效，包括 nil 中间件                    |
+| ErrInvalidRequest   | 请求参数无效，包括配置数量、地址、请求头和输入冲突           |
+| ErrRequestEncode    | 请求正文编码失败，保留具体编码错误                           |
+| ErrRequestHook      | 签名或鉴权钩子执行失败，保留原始原因                         |
+| ErrTransport        | 网络发送阶段失败，保留原始网络或 context 错误                |
+| ErrResponseRead     | 响应读取失败，包括超出读取限额                               |
+| ErrResponseTooLarge | 响应超过配置读取限额，同时归属 ErrResponseRead               |
+| ErrHTTPStatus       | HTTP 状态码非 2xx，具体状态码由 StatusError 提供             |
+| ErrResponseDecode   | JSON 响应解码失败，保留具体 JSON 错误                        |
+| ErrLogAcc           | 工厂返回 nil/typed nil 日志累加器                            |
+| ErrMiddleware       | 中间件执行失败、返回 nil Handler、返回无效结果或违反调用约定 |
 
 保留已有错误标识及错误类型，不改变其字段类型或取消原有匹配能力。`RequestError` 继续使用 Phase 和 Err 描述失败阶段及原因，支持 Unwrap；Phase 扩展 middleware。`StatusError` 保留 StatusCode，并通过 Is 支持 `errors.Is(err, ErrHTTPStatus)`，调用方仍可通过 `errors.AsType[*StatusError]` 获取状态码。
 
@@ -126,7 +129,7 @@ func observe(next tkhttp.Handler) (handler tkhttp.Handler) {
 }
 ```
 
-## 后续实现与验证范围
+## 实现与验证范围
 
 实现将涉及 options.go、client.go、独立 middleware.go、集中错误文件 error.go、日志分类及 README。先保留现有 RequestHook，避免要求调用方迁移签名实现。业务代码复用 error.go 的错误声明和包装助手。
 

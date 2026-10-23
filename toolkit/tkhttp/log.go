@@ -20,8 +20,19 @@ type requestLog struct {
 	biz           map[string]any
 }
 
-func (s *requestLog) failure(cause error) (err error) {
-	return &RequestError{Phase: s.phase, Err: cause}
+func (s *requestLog) result(err error) {
+	if err == nil {
+		s.phase = "complete"
+		return
+	}
+	failure, ok := errors.AsType[*RequestError](err)
+	if ok {
+		s.phase = failure.Phase
+		return
+	}
+	if errors.Is(err, ErrHTTPStatus) {
+		s.phase = "status"
+	}
 }
 
 func (s *requestLog) finish(ctx context.Context, response **Response, result *error) {
@@ -49,7 +60,7 @@ func (s *requestLog) finish(ctx context.Context, response **Response, result *er
 		s.acc.Info(ctx, "HTTP 请求完成")
 		return
 	}
-	_, statusError := errors.AsType[*StatusError](*result)
+	statusError := s.phase == "status" && errors.Is(*result, ErrHTTPStatus)
 	if errors.Is(*result, context.Canceled) || statusError && status < 500 {
 		s.acc.Warn(ctx, "HTTP 请求失败")
 		return
@@ -66,15 +77,18 @@ func errorKind(err error, phase string) (kind string) {
 		return "timeout"
 	case errors.Is(err, context.Canceled):
 		return "canceled"
+	case errors.Is(err, ErrMiddleware):
+		return "middleware"
 	case errors.Is(err, ErrResponseTooLarge):
 		return "responseTooLarge"
 	case errors.Is(err, ErrRequestHook):
 		return "requestHook"
 	case errors.Is(err, ErrInvalidRequest):
 		return "invalidRequest"
+	case errors.Is(err, ErrRequestEncode):
+		return "requestEncode"
 	}
-	_, statusError := errors.AsType[*StatusError](err)
-	if statusError {
+	if errors.Is(err, ErrHTTPStatus) {
 		return "httpStatus"
 	}
 	return phase

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"time"
 )
 
@@ -17,6 +18,7 @@ type Client struct {
 	ownedPool     *http.Transport // 非 nil 表示连接池由当前 Client 创建。
 	logAccFactory LogAccFactory   // 每次调用创建独立累加器。
 	hook          RequestHook     // 初始化后固定的请求头钩子。
+	middlewares   []Middleware    // 初始化后固定的完整调用层中间件。
 }
 
 // New 复制配置、补齐默认值并校验依赖；不主动建立网络连接。
@@ -42,6 +44,12 @@ func New(config Config, opts ...Option) (client *Client, err error) {
 	if (selected.logAccSet || !config.DisableLog) && selected.logAccFactory == nil {
 		err = invalidConfig("WithLogAcc requires a non-nil factory when logging is enabled")
 		return
+	}
+	for _, middleware := range selected.middlewares {
+		if middleware == nil {
+			err = invalidConfig("WithMiddleware requires non-nil middleware")
+			return
+		}
 	}
 	native := &http.Client{
 		CheckRedirect: func(request *http.Request, via []*http.Request) (err error) {
@@ -72,6 +80,7 @@ func New(config Config, opts ...Option) (client *Client, err error) {
 		ownedPool:     owned,
 		logAccFactory: selected.logAccFactory,
 		hook:          selected.hook,
+		middlewares:   slices.Clone(selected.middlewares),
 	}
 	return
 }
@@ -136,6 +145,21 @@ func (c *Client) do(ctx context.Context, method, target string, configs []Reques
 		logContext = context.Background()
 	}
 	defer state.finish(logContext, &response, &err)
+	handler := Handler(func(ctx context.Context, method, target string, configs ...RequestConfig) (response *Response, err error) {
+		return c.execute(ctx, method, target, configs, &state)
+	})
+	for _, middleware := range slices.Backward(c.middlewares) {
+		handler = wrapMiddleware(middleware, handler)
+	}
+	if validToken(method) {
+		state.method = method
+	}
+	response, err = handler(ctx, method, target, configs...)
+	state.result(err)
+	return
+}
+
+func (c *Client) execute(ctx context.Context, method, target string, configs []RequestConfig, state *requestLog) (response *Response, err error) {
 	if validToken(method) {
 		state.method = method
 	}
@@ -223,12 +247,4 @@ func (c *Client) do(ctx context.Context, method, target string, configs []Reques
 	}
 	state.phase = "complete"
 	return
-}
-
-func contextResult(ctx context.Context, original error) (err error) {
-	err = ctx.Err()
-	if err != nil {
-		return
-	}
-	return original
 }

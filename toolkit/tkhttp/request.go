@@ -163,6 +163,10 @@ func encodeBody(config RequestConfig) (body []byte, contentType string, err erro
 	switch {
 	case config.JSON != nil:
 		body, err = json.Marshal(config.JSON)
+		if err != nil {
+			err = withErrorKind(ErrRequestEncode, err)
+			return
+		}
 		contentType = "application/json"
 	case config.Form != nil:
 		form := make(url.Values, len(config.Form))

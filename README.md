@@ -50,7 +50,7 @@ whtlib/
 
 ## HTTP 客户端
 
-[tkhttp 使用说明](toolkit/tkhttp/README.md)：Config 管理基本参数，With 选项注入标准库连接池、客户端、累计日志和签名钩子；请求配置可省略，支持 JSON/表单/字节正文、响应大小限制与可选解码。每次调用最多执行一次 `http.Client.Do` 并打印一条汇总日志，不提供重试能力。
+[tkhttp 使用说明](toolkit/tkhttp/README.md)：Config 管理基本参数，With 选项注入标准库连接池、客户端、调用层中间件、累计日志和签名钩子；中间件可观察参数校验、响应读取和解码的最终错误，通过 Response.StatusCode 获取状态码。请求配置可省略，支持 JSON/表单/字节正文、响应大小限制与可选解码。每次调用最多执行一次 `http.Client.Do` 并打印一条汇总日志，不提供重试能力。
 
 ## 签名验签
 

@@ -8,6 +8,8 @@
 
 已按本设计在 `main` 分支实现 tkhttp、共享 LogAcc 契约和 logx 适配层；用法见 [tkhttp README](../../../toolkit/tkhttp/README.md)。tkretry 仍为独立设计，本次未实现。
 
+完整调用层中间件通过 WithMiddleware 可选注入，覆盖参数校验、响应读取和 JSON 解码的最终结果；接口、执行顺序与集中错误约定见 [中间件设计](2026-10-23-tkhttp-middleware-design.md)。
+
 ## 方案比较
 
 
@@ -281,7 +283,7 @@ type Response struct {
 - 解码失败返回 `Response` 和错误。解码目标可能被标准库部分写入，调用方不得在错误时当作完整结果使用。
 - 未收到响应时返回 nil Response；响应头已收到时，读取或解码失败仍返回本次 Response 及错误。
 
-提供 `ErrInvalidConfig`、`ErrInvalidRequest`、`ErrResponseTooLarge`、`ErrRequestHook`、`ErrLogAcc` 等可供 `errors.Is` 判断的哨兵错误。`RequestError` 标识 `prepare`、`hook`、`transport`、`read`、`decode` 阶段，并通过 `Unwrap` 保留原始错误，支持 `errors.Is/AsType` 检查 context、网络和 JSON 错误。`StatusError` 保留状态码，但 Error 文本不包含响应正文。
+包内具有封装价值的错误集中声明于 error.go，包括 `ErrInvalidConfig`、`ErrInvalidRequest`、`ErrRequestEncode`、`ErrRequestHook`、`ErrTransport`、`ErrResponseRead`、`ErrResponseTooLarge`、`ErrHTTPStatus`、`ErrResponseDecode`、`ErrLogAcc`、`ErrMiddleware`。`RequestError` 标识 `prepare`、`hook`、`transport`、`read`、`decode`、`middleware` 阶段，通过 `Unwrap` 保留原始错误，支持 `errors.Is/AsType` 检查包级类别、context、网络和 JSON 错误。`StatusError` 通过 Is 匹配 ErrHTTPStatus，并保留状态码，但 Error 文本不包含响应正文；只要取得 HTTP 响应，读取或解码失败时也返回含 StatusCode 的 Response。
 
 HTTP 状态错误与读取错误同时出现时，以读取错误为主，Response 仍保存状态码。错误的公开描述采用受控文本，日志使用阶段和错误分类，不直接打印底层可能包含完整 URL 的 `url.Error.Error()`。
 
@@ -339,12 +341,12 @@ Config.DisableLog 为 true 时不调用工厂，也不输出 HTTP 日志。累�
 | `http.statusCode`    | 本次响应状态码，未收到响应时为 0                                            |
 | `http.requestBytes`  | 编码后的固定请求体长度                                                      |
 | `http.responseBytes` | 本次响应实际读取字节数，检测超限时可达到限额加一                            |
-| `http.costMs`        | 整次调用总耗时，包含准备、签名、请求、读取和解码                            |
-| `http.phase`         | 最终结束阶段：prepare、hook、transport、read、status、decode、complete      |
+| `http.cost`          | 可读耗时字符串，包含中间件前后置、准备、签名、请求、读取和解码              |
+| `http.phase`         | 最终结束阶段：prepare、hook、transport、read、status、decode、middleware、complete |
 | `http.errorKind`     | 最终错误分类，无错误时为空；不包含原始请求/响应数据                         |
 | `biz`                | 调用方显式传入的非敏感业务字段                                              |
 
-logx 适配实现通过当前起点提供可读耗时前缀，起点可在构造时传入或通过 SetStartTime 修改；其他实现可选择等价展示；`http.costMs` 始终由 tkhttp 累计，用于结构化检索。成功最终打印 Info；HTTP 3xx/4xx 和主动取消打印 Warn；5xx、总超时、准备、钩子、传输、读取和解码错误打印 Error。
+logx 适配实现通过当前起点提供可读耗时前缀，起点可在构造时传入或通过 SetStartTime 修改；其他实现可选择等价展示；`http.cost` 由 tkhttp 累计并输出可读字符串。汇总日志在中间件链外层，按最终返回结果输出：成功打印 Info；HTTP 3xx/4xx 和主动取消打印 Warn；5xx、总超时、准备、钩子、传输、读取、解码及中间件错误打印 Error。
 
 默认仅记录上述元数据，不记录 query 值、请求/响应正文、请求/响应 Header、Cookie、鉴权值和签名；首版不提供直接开启完整报文日志的开关。自定义日志字段显式传入，不自动反射请求对象。
 

@@ -27,9 +27,7 @@ func readResponse(native *http.Response, limit int64) (response *Response, readB
 	if int64(len(body)) > limit {
 		response.Body = body[:limit:limit]
 		response.BodyTruncated = true
-		if err == nil {
-			err = ErrResponseTooLarge
-		}
+		err = withErrorKind(ErrResponseTooLarge, err)
 	}
 	return
 }
