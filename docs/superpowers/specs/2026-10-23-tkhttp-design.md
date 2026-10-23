@@ -2,9 +2,9 @@
 
 ## 需求与状态
 
-在 `toolkit/tkhttp` 提供框架无关、可并发复用的 HTTP 客户端，通过函数选项完成初始化和单次请求配置。
+在 `toolkit/tkhttp` 提供框架无关、可并发复用的 HTTP 客户端。基本参数通过 `Config` 传入，单次请求参数通过 `RequestConfig` 传入，函数选项仅用于可选依赖注入。
 
-用户已确认：使用现有 `logx.LogAcc` 累计字段；每次 HTTP 逻辑调用独立累计，包含重试，结束打印一条汇总日志。连接池基于标准库，通过函数选项注入，未注入时创建默认连接池。其他客户端配置、默认值和以下 API 均为本设计的建议，尚未实现。
+用户已确认：使用现有 `logx.LogAcc` 累计字段；每次 HTTP 逻辑调用独立累计，包含重试，结束打印一条汇总日志。连接池基于标准库，通过函数选项注入，未注入时创建默认连接池。基本参数使用 Config，有合理默认值的补齐默认值，无法默认的必填参数缺失时直接报错。其他默认值和以下 API 均为本设计的建议，尚未实现。
 
 本次交付设计文档。后续实现以确认后的设计为准，在当前仓库的 `main` 分支完成。
 
@@ -34,54 +34,90 @@
 以下签名用于约定接口，均为拟定 API：
 
 ```go
-func New(opts ...Option) (client *Client, err error)
+func New(config Config, opts ...Option) (client *Client, err error)
 func WithTransport(transport *http.Transport) (option Option)
 
-func (c *Client) Do(ctx context.Context, method, target string, opts ...RequestOption) (response *Response, err error)
-func (c *Client) Get(ctx context.Context, target string, opts ...RequestOption) (response *Response, err error)
-func (c *Client) Post(ctx context.Context, target string, opts ...RequestOption) (response *Response, err error)
+func (c *Client) Do(ctx context.Context, method, target string, config RequestConfig) (response *Response, err error)
+func (c *Client) Get(ctx context.Context, target string, config RequestConfig) (response *Response, err error)
+func (c *Client) Post(ctx context.Context, target string, config RequestConfig) (response *Response, err error)
 
 func (c *Client) CloseIdleConnections()
 ```
 
 `Do` 是唯一执行入口。`Get`、`Post` 仅指定方法，其他方法直接通过 `Do` 调用。
 
-### 客户端选项
+### 客户端基本配置
 
-| 选项 | 行为与默认值 |
+```go
+type Config struct {
+	BaseURL          string        // 必填的服务基础地址。
+	DefaultHeader    http.Header   // 所有请求使用的默认请求头。
+	Timeout          time.Duration // 整次调用的总超时；0 使用默认值，-1 不添加组件超时。
+	Retry            RetryPolicy   // 重试策略，零值表示仅尝试一次。
+	MaxResponseBytes int64         // 单次响应的读取上限；0 使用默认值。
+	DisableLog       bool          // 是否关闭 HTTP 汇总日志，默认 false。
+}
+```
+
+| 字段 | 默认值与校验 |
 | --- | --- |
-| `WithBaseURL(string)` | 可选；必须是包含主机的 HTTP(S) 绝对 URL，不接受 userinfo、query 和 fragment |
-| `WithDefaultHeader(string, string)` | 配置默认请求头，同名字段以后一次为准 |
-| `WithTimeout(time.Duration)` | 默认 10 秒；0 取消组件自身的总超时，负数无效 |
-| `WithTransport(*http.Transport)` | 直接借用指定的标准库连接池；显式 nil 无效；优先于注入客户端的 Transport |
-| `WithHTTPClient(*http.Client)` | 借用 Transport、Jar 和 Timeout 等公开配置；显式 nil 无效；Transport 为 nil 且没有 WithTransport 时创建默认池 |
-| `WithLogger(*logx.Logger)` | 默认使用 `logx.Default()`；nil 同样表示全局实例，生命周期由调用方管理 |
-| `WithLogging(bool)` | 默认 true；false 时不创建累加器、不输出 HTTP 日志 |
-| `WithRetry(RetryPolicy)` | 默认仅尝试一次；配置后仍受方法幂等性和请求总时限约束 |
-| `WithMaxResponseBytes(int64)` | 默认 8 MiB，显式值必须为正数且加一不会溢出；限制每次响应读取量 |
-| `WithRequestHook(RequestHook)` | 每次执行尝试前生成签名或鉴权请求头；nil 表示未配置 |
+| `BaseURL` | 无默认值，必填；必须是包含主机的 HTTP(S) 绝对 URL，不接受 userinfo、query 和 fragment |
+| `DefaultHeader` | nil 表示无默认请求头；非法字段名或值在 New 中返回配置错误 |
+| `Timeout` | 0 补齐 10 秒；正数按指定总时限执行；精确 -1 不添加组件超时，其他负数无效 |
+| `Retry` | 零值仅尝试一次；其余字段默认值和校验见重试策略 |
+| `MaxResponseBytes` | 0 补齐 8 MiB；显式非零值必须为正数且加一不会溢出 |
+| `DisableLog` | false，启用每次调用的一条汇总日志；true 关闭 |
 
-忽略 nil 选项，同类标量选项以后一次为准。构造时复制配置集合，初始化后不提供配置修改方法。
+`New` 统一复制配置、补齐默认值并验证所有参数。BaseURL 缺失、无效 URL、非法 Header、无效时长或限额等返回 `ErrInvalidConfig`，错误指出字段和原因，不猜测域名、不静默修正非法值。精确 -1 指原始 `time.Duration(-1)`，不是 `-time.Second`。默认值补齐后才选择和创建连接池，初始化失败不遗留自有资源。
 
-### 请求选项
+Config 中不包含 Transport、HTTPClient、Logger 和 RequestHook 等运行期依赖，也不为这些依赖再提供同名配置字段；调用方可以用配置文件或普通结构体集中管理基本参数。
+
+### 可选依赖注入
 
 | 选项 | 行为 |
 | --- | --- |
-| `WithHeader(string, string)` | 覆盖本次请求的同名默认请求头 |
-| `WithQuery(url.Values)` | 合并 query，同名键整体替换并保留多值；重复选项以后一次的同名键为准 |
-| `WithJSON(any)` | JSON 编码一次，设置默认 Content-Type 为 `application/json` |
-| `WithForm(url.Values)` | 表单编码一次，设置默认 Content-Type 为 `application/x-www-form-urlencoded` |
-| `WithBody([]byte)` | 使用原始字节，不推测 Content-Type |
-| `WithDecodeJSON(any)` | 将最终成功响应解码到非 nil 指针；读取和解码都发生在最终日志之前 |
-| `WithTimeoutOverride(time.Duration)` | 覆盖本次调用的组件总超时；0 不添加组件超时，负数无效 |
-| `WithIdempotent(bool)` | 明确声明本次业务操作可安全重试，不自动生成业务幂等机制 |
-| `WithLogFields(map[string]any)` | 添加本次调用的非敏感业务字段，单独放入 `biz`，与内置 HTTP 字段隔离 |
+| `WithTransport(*http.Transport)` | 直接借用指定的标准库连接池；显式 nil 无效；优先于注入客户端的 Transport |
+| `WithHTTPClient(*http.Client)` | 借用 Transport、Jar 和 Timeout 等公开配置；显式 nil 无效；Transport 为 nil 且没有 WithTransport 时创建默认池 |
+| `WithLogger(*logx.Logger)` | 默认使用 `logx.Default()`；nil 同样表示全局实例，生命周期由调用方管理 |
+| `WithRequestHook(RequestHook)` | 每次执行尝试前生成签名或鉴权请求头；nil 表示未配置 |
 
-请求体选项互斥，重复设置请求体返回参数错误，避免静默覆盖。JSON 的 nil 值编码为 `null`，与没有请求体区分。客户端和请求级 Header 对自动 Content-Type 的显式设置优先。
+忽略 nil 选项，同类注入以后一次为准。配置在构造期间固定，初始化后不提供配置修改方法。Config 默认容器在 New 中复制，依赖实例按后文的借用约定持有。
 
-Header/query/form/map 容器和原始字节在选项创建时复制；业务字段的嵌套可变对象由调用方保证调用期间不被并发修改。JSON 输入在 `Do` 中只编码一次，调用方在编码结束前不得修改输入；可复用的请求选项不接管 JSON 解码目标的并发访问。
+### 单次请求配置
 
-`ctx` 必须非 nil，nil 属于调用错误，沿用 `LogAcc` 的 panic 约定。已经取消的合法 context 返回对应错误，日志仍使用原 context 打印，不发起网络请求。
+```go
+type RequestConfig struct {
+	Header     http.Header    // 覆盖本次请求的同名默认请求头。
+	Query      url.Values     // 合并到目标 URL 的 query，同名键整体替换。
+	JSON       any            // JSON 请求体，nil 表示未设置。
+	Form       url.Values     // 表单请求体，nil 表示未设置。
+	Body       []byte         // 原始字节请求体，nil 表示未设置。
+	Result     any            // 可选 JSON 解码目标，必须是非 nil 指针。
+	Timeout    time.Duration  // 0 继承 Client，正数覆盖，-1 不添加组件超时。
+	Idempotent *bool          // nil 按方法判断，true 显式允许，false 禁止重试。
+	LogFields  map[string]any // 本次调用的非敏感业务日志字段。
+}
+```
+
+| 字段 | 默认值与校验 |
+| --- | --- |
+| `Header` | nil 不覆盖；显式同名字段覆盖默认请求头，非法 Header 在发送前报错 |
+| `Query` | nil 不增加参数；同名键整体替换，保留多值 |
+| `JSON` | nil 表示未设置；设置时编码一次，默认 Content-Type 为 `application/json` |
+| `Form` | nil 表示未设置；非 nil 空集合也是显式表单体，默认 Content-Type 为 `application/x-www-form-urlencoded` |
+| `Body` | nil 表示未设置；非 nil 空切片也是显式字节体，不推测 Content-Type |
+| `Result` | nil 不解码；非指针或 typed nil 在发送前返回参数错误；只解码最终成功响应 |
+| `Timeout` | 0 继承 Client；正数覆盖；精确 -1 不添加组件超时，其他负数无效 |
+| `Idempotent` | nil 使用方法默认规则；true 显式允许重试，false 禁止重试；不自动创建业务幂等机制 |
+| `LogFields` | nil 无业务字段；设置时放入 `biz`，与内置 HTTP 字段隔离 |
+
+`RequestConfig{}` 可用于不需要额外参数的请求，不再提供与其字段重复的请求 With 选项。JSON、Form、Body 三者互斥，同时设置多个请求体直接返回 `ErrInvalidRequest`。需要显式发送 JSON `null` 时使用 `JSON: json.RawMessage("null")`；typed nil 的 JSON 输入仍按标准库编码为 null。客户端和请求级 Header 对自动 Content-Type 的显式设置优先。
+
+请求 method、target 没有可推断的默认值，缺失或无效时在发送前直接返回 `ErrInvalidRequest`。请求 Header、Result、超时和请求体冲突也在发送前校验；JSON 编码失败属于 prepare 错误，不进入网络阶段。`Get`、`Post` 的方法由各自 API 明确指定。
+
+请求 Header/query/form/map 容器、字节请求体和 Idempotent 指向的布尔值在 Do 入口复制；调用方不得在复制期间并发修改。业务字段的嵌套可变对象由调用方保证调用期间不被并发修改。JSON 输入在 Do 中只编码一次，调用方在编码结束前不得修改输入；同一个 Result 目标的并发访问由调用方管理。
+
+`ctx` 必须非 nil，nil 直接返回 `ErrInvalidRequest`；仅错误日志使用 `context.Background()` 满足 LogAcc 的非 nil 输出约定，不为网络请求补造 context。已经取消的合法 context 返回对应错误，日志仍使用原 context 打印，不发起网络请求。
 
 ## URL、连接池与超时
 
@@ -93,9 +129,9 @@ BaseURL 采用标准库 `url.URL.ResolveReference` 的语义：
 | --- | --- | --- |
 | `https://api.example.com/v1/` | `orders` | `https://api.example.com/v1/orders` |
 | `https://api.example.com/v1/` | `/orders` | `https://api.example.com/orders` |
-| 未配置 | `https://api.example.com/orders` | 使用绝对地址 |
+| `https://api.example.com/v1/` | `https://api.example.com/orders` | 使用同源绝对地址 |
 
-BaseURL 不被当成路径字符串直接拼接，末尾 `/` 按标准库规则影响相对路径解析。未配置 BaseURL 时必须提供绝对 URL。拒绝 target 中的 userinfo、fragment 和 `//host/path` 形式；配置 BaseURL 时，绝对 target 必须保持同源。按 scheme、大小写规范化的 hostname 和有效端口判断同源。
+BaseURL 必须在 Config 中提供，不被当成路径字符串直接拼接，末尾 `/` 按标准库规则影响相对路径解析。target 可使用相对路径或同源绝对地址。拒绝 target 中的 userinfo、fragment 和 `//host/path` 形式；绝对 target 必须与 BaseURL 保持同源。按 scheme、大小写规范化的 hostname 和有效端口判断同源。
 
 首版不自动跟随重定向：通过 `http.ErrUseLastResponse` 取得原始 3xx 响应，再按状态码错误返回。注入客户端的 `CheckRedirect` 不沿用，此覆盖行为写入 API 注释；签名、Header 和请求体不会隐式转发到另一个 URL。
 
@@ -119,7 +155,10 @@ transport := &http.Transport{
 	ExpectContinueTimeout: time.Second,
 }
 
-client, err := tkhttp.New(tkhttp.WithTransport(transport))
+client, err := tkhttp.New(
+	tkhttp.Config{BaseURL: "https://api.example.com/v1/"},
+	tkhttp.WithTransport(transport),
+)
 // 处理 err；可将同一个 transport 注入其他 Client，共享实际连接池。
 ```
 
@@ -177,7 +216,7 @@ type Response struct {
 - 使用 `io.LimitReader` 读取至上限加一字节判断超限，不仅依赖 Content-Length；限制作用于组件实际读取的数据，自动解压时为解压后的数据。
 - 超限返回 `ErrResponseTooLarge`，停止重试和解码。读取失败保留已读取内容并返回错误。
 - 每次响应体都关闭；正常缓冲响应读至 EOF，超限或读取失败立即关闭，不为复用连接无界读取剩余内容。
-- 只对最终成功、完整读取的响应执行 `WithDecodeJSON`；采用 `encoding/json.Unmarshal`，拒绝尾随的第二个 JSON 值。
+- 只在 RequestConfig.Result 非 nil 时对最终成功、完整读取的响应执行解码；采用 `encoding/json.Unmarshal`，拒绝尾随的第二个 JSON 值。
 - HEAD、204 和 205 不进行 JSON 解码，目标保持原值；其他成功状态的空响应在要求解码时返回解码错误。
 - 解码失败不重试，返回 `Response` 和错误。解码目标可能被标准库部分写入，调用方不得在错误时当作完整结果使用。
 - 尚未收到任何最终响应时返回 nil Response；如果此前失败响应后再次执行发生传输错误，也不把旧响应冒充为最终响应，历史结果保留在日志 `attempts` 中。
@@ -200,7 +239,7 @@ type RetryPolicy struct {
 - `MaxAttempts` 包含首次请求，默认 1；0 使用默认值，负数无效。
 - `BaseDelay` 默认 200ms，`MaxDelay` 默认 2s；0 使用默认值，负数或 MaxDelay 小于 BaseDelay 无效。
 - `StatusCodes` 为 nil 时使用 429、502、503、504；非 nil 空集合关闭状态码重试，非空集合仅允许配置 4xx/5xx。
-- GET、HEAD、OPTIONS 默认允许重试；其他方法须通过 `WithIdempotent(true)` 显式启用。`WithIdempotent(false)` 可禁止本次调用重试。
+- RequestConfig.Idempotent 为 nil 时，GET、HEAD、OPTIONS 默认允许重试；其他方法须显式设为 true 才允许重试。显式 false 可禁止本次调用重试。
 - 添加 Idempotency-Key 请求头本身不自动开启重试；业务幂等键在各次尝试中保持一致，远端须真正实现幂等约定。
 - JSON、表单和字节请求体在准备阶段固定为可重放字节，每次尝试创建新的请求和 Body。
 - 无响应头时，仅对明确的瞬时网络错误重试，包括连接重置、暂时性 DNS 错误、总 context 未截止时的传输超时；证书验证、无效参数、钩子失败、响应体读取/超限、解码失败不重试。
@@ -289,21 +328,23 @@ acc := logx.NewLogAcc(
 ```go
 func fetchDevices(ctx context.Context, logger *logx.Logger) (result map[string]any, err error) {
 	client, err := tkhttp.New(
-		tkhttp.WithBaseURL("https://api.example.com/v1/"),
-		tkhttp.WithTimeout(5*time.Second),
+		tkhttp.Config{
+			BaseURL: "https://api.example.com/v1/",
+			Timeout: 5 * time.Second,
+			Retry:   tkhttp.RetryPolicy{MaxAttempts: 3},
+		},
 		tkhttp.WithLogger(logger),
-		tkhttp.WithRetry(tkhttp.RetryPolicy{MaxAttempts: 3}),
 	)
 	if err != nil {
 		return
 	}
 	defer client.CloseIdleConnections()
 
-	_, err = client.Get(ctx, "devices",
-		tkhttp.WithQuery(url.Values{"page": {"1"}}),
-		tkhttp.WithDecodeJSON(&result),
-		tkhttp.WithLogFields(map[string]any{"action": "queryDevice"}),
-	)
+	_, err = client.Get(ctx, "devices", tkhttp.RequestConfig{
+		Query:     url.Values{"page": {"1"}},
+		Result:    &result,
+		LogFields: map[string]any{"action": "queryDevice"},
+	})
 	return
 }
 ```
@@ -312,11 +353,13 @@ func fetchDevices(ctx context.Context, logger *logx.Logger) (result map[string]a
 
 ## 文件组织与验证建议
 
-建议在 `toolkit/tkhttp/` 按 `client.go`、`options.go`、`request.go`、`response.go`、`retry.go`、`hook.go`、`log.go`、`error.go` 和 `README.md` 组织。仅供 tkhttp 使用的类型和辅助逻辑留在包内，`adapter/` 不增加单组件接口。
+建议在 `toolkit/tkhttp/` 按 `client.go`、`config.go`、`options.go`、`request.go`、`response.go`、`retry.go`、`hook.go`、`log.go`、`error.go` 和 `README.md` 组织。config.go 负责基本参数、默认值和校验，options.go 仅负责可选依赖注入。仅供 tkhttp 使用的类型和辅助逻辑留在包内，`adapter/` 不增加单组件接口。
 
 实现后应检查成功、准备失败、超时取消、HTTP 状态错误、读取超限、解码失败和重试耗尽等路径；特别验证两次尝试最终只输出一条日志、并发请求字段隔离、签名字节与发送字节一致、敏感数据不进入日志，以及借用客户端和连接池的配置不被修改、借用池不被主动清理、Logger 不被关闭。
 
 连接池验证还应覆盖：未注入时创建独立默认池；单 Client 多次请求和重试复用同一 Transport；多个 Client 注入同一池时保留实例身份和连接共享；WithTransport 与 WithHTTPClient 的组合顺序不改变优先级；注入客户端的 nil Transport 触发默认创建；显式 nil 和 typed nil 拒绝；组件仅清理自有池的空闲连接。实际连接复用通过本地 httptest 的连接状态或 httptrace 验证。
+
+配置验证还应覆盖：仅填写 BaseURL 时补齐合理默认值；BaseURL 缺失直接报错；非法时长、限额、Header 和重试策略在 New 中拒绝；RequestConfig 零值、超时继承/禁用、typed nil Result、JSON null 和互斥请求体的行为一致；nil context 返回参数错误且能完成错误日志；所有参数错误都不发起网络请求。
 
 按全局工作流，新增测试需要另行获得用户允许。获准后仅采用 `httptest` 或自定义 RoundTripper，覆盖取消/等待、Retry-After、body 重放、URL 解析、资源关闭、日志数量和调用位置，并对 `tkhttp` 运行包级 race 与 vet 检查，不连接真实平台或运行整个仓库集成测试。本次仅修改设计文档，不编写或执行新增测试。
 
