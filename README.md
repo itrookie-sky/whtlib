@@ -21,6 +21,7 @@ whtlib/
 │   ├── tkua/     # User-Agent 结构化解析与系统、终端、浏览器等枚举
 │   └── tkkafka/  # Kafka 投递、消费、重试及分区提交
 ├── extension/    # Go 标准库功能扩展
+│   ├── errx/     # 错误堆栈、字段、错误树、业务码与诊断快照
 │   ├── filepathx/ # 本地路径查找、目录范围判断与文件名处理
 │   ├── jsonx/    # encoding/json 扩展
 │   ├── logx/     # slog 扩展及文件轮转
@@ -65,6 +66,10 @@ whtlib/
 
 - [filepathx](extension/filepathx/README.md)：向上查找标记目录、目录内拼接与相对路径、用户目录展开、文件名及扩展名处理。目录范围检查是词法判断，不解析符号链接。
 - [pathx](extension/pathx/README.md)：基于标准库 path，按完整分段判断和裁剪路径前缀，避免 `/api/v1` 误匹配 `/api/v10`。
+
+## 错误扩展
+
+[errx 使用说明](extension/errx/README.md)：在标准错误链上附加堆栈和结构化字段，遍历多分支错误树，提取业务码并生成支持 slog、LogAcc 和 JSON 的诊断快照，兼容 errors.Is/AsType。
 
 ## User-Agent
 
