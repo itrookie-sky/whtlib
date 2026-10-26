@@ -178,7 +178,7 @@ Response.StatusCode 为收到的 HTTP 状态码，即使正文读取、超限或
 
 包级错误、自定义类型及包装助手统一声明在 [error.go](error.go)。`*RequestError` 提供 Phase 和 Unwrap；通过 errors.Is 判断稳定类别，通过 errors.AsType 获取状态码或底层网络/JSON 原因。Error 文本保持受控，显式解包后应自行决定如何处理原始错误。
 
-阶段常量集中声明在 [phase.go](phase.go)，用于判断 `RequestError.Phase` 和日志的 `http.phase`。常量保留原有字符串值，`RequestError.Phase` 仍为 `string`，可直接与常量比较。
+阶段常量集中声明在 [consts.go](consts.go)，用于判断 `RequestError.Phase` 和日志的 `http.phase`。常量保留原有字符串值，`RequestError.Phase` 仍为 `string`，可直接与常量比较。
 
 | 阶段常量 | 值 | 含义 |
 | --- | --- | --- |
