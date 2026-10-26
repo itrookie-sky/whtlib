@@ -16,6 +16,7 @@ whtlib/
 │   ├── tkredis/  # Redis 命令、Lua、集合及租约锁
 │   ├── tksign/   # 多格式公私钥解析、RSA/ECDSA/Ed25519 签名验签
 │   ├── tktoken/  # 会话、旧 token 协议、标准 HTTP 中间件
+│   ├── tkua/     # User-Agent 结构化解析与系统、终端、浏览器等枚举
 │   └── tkkafka/  # Kafka 投递、消费、重试及分区提交
 ├── extension/    # Go 标准库功能扩展
 │   ├── filepathx/ # 本地路径查找、目录范围判断与文件名处理
@@ -62,6 +63,10 @@ whtlib/
 
 - [filepathx](extension/filepathx/README.md)：向上查找标记目录、目录内拼接与相对路径、用户目录展开、文件名及扩展名处理。目录范围检查是词法判断，不解析符号链接。
 - [pathx](extension/pathx/README.md)：基于标准库 path，按完整分段判断和裁剪路径前缀，避免 `/api/v1` 误匹配 `/api/v10`。
+
+## User-Agent
+
+[tkua 使用说明](toolkit/tkua/README.md)：复用 uap-go 规则，解析系统、平台、终端、浏览器、引擎、宿主应用、CPU 架构及机器人类别；提供默认 Parse 与可并发复用的 Parser，枚举集中在 consts.go。
 
 ## 迁移组件
 
