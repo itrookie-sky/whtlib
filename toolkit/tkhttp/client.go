@@ -127,7 +127,7 @@ func (c *Client) Post(ctx context.Context, target string, configs ...RequestConf
 }
 
 func (c *Client) do(ctx context.Context, method, target string, configs []RequestConfig) (response *Response, err error) {
-	state := requestLog{start: time.Now(), phase: "prepare"}
+	state := requestLog{start: time.Now(), phase: PhasePrepare}
 	if c == nil || c.httpClient == nil {
 		err = state.failure(invalidConfig("Client must be created with New"))
 		return
@@ -204,7 +204,7 @@ func (c *Client) execute(ctx context.Context, method, target string, configs []R
 		return
 	}
 	if c.hook != nil {
-		state.phase = "hook"
+		state.phase = PhaseHook
 		err = c.applyHook(ctx, request, body)
 		if err != nil {
 			err = state.failure(contextResult(ctx, err))
@@ -216,7 +216,7 @@ func (c *Client) execute(ctx context.Context, method, target string, configs []R
 		err = state.failure(err)
 		return
 	}
-	state.phase = "transport"
+	state.phase = PhaseTransport
 	native, err := c.httpClient.Do(request)
 	if err != nil {
 		if native != nil {
@@ -228,25 +228,25 @@ func (c *Client) execute(ctx context.Context, method, target string, configs []R
 		err = state.failure(contextResult(ctx, err))
 		return
 	}
-	state.phase = "read"
+	state.phase = PhaseRead
 	response, state.responseBytes, err = readResponse(native, c.config.MaxResponseBytes)
 	err = contextResult(ctx, err)
 	if err != nil {
 		err = state.failure(err)
 		return
 	}
-	state.phase = "status"
+	state.phase = PhaseStatus
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		err = &StatusError{StatusCode: response.StatusCode}
 		return
 	}
-	state.phase = "decode"
+	state.phase = PhaseDecode
 	err = decodeResponse(response, method, config.Result)
 	err = contextResult(ctx, err)
 	if err != nil {
 		err = state.failure(err)
 		return
 	}
-	state.phase = "complete"
+	state.phase = PhaseComplete
 	return
 }

@@ -22,7 +22,7 @@ type requestLog struct {
 
 func (s *requestLog) result(err error) {
 	if err == nil {
-		s.phase = "complete"
+		s.phase = PhaseComplete
 		return
 	}
 	failure, ok := errors.AsType[*RequestError](err)
@@ -31,7 +31,7 @@ func (s *requestLog) result(err error) {
 		return
 	}
 	if errors.Is(err, ErrHTTPStatus) {
-		s.phase = "status"
+		s.phase = PhaseStatus
 	}
 }
 
@@ -60,7 +60,7 @@ func (s *requestLog) finish(ctx context.Context, response **Response, result *er
 		s.acc.Info(ctx, "HTTP 请求完成")
 		return
 	}
-	statusError := s.phase == "status" && errors.Is(*result, ErrHTTPStatus)
+	statusError := s.phase == PhaseStatus && errors.Is(*result, ErrHTTPStatus)
 	if errors.Is(*result, context.Canceled) || statusError && status < 500 {
 		s.acc.Warn(ctx, "HTTP 请求失败")
 		return

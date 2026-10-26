@@ -34,7 +34,7 @@ var (
 // RequestError 标识失败阶段；Error 不包含 URL、报文或底层原始错误文本。
 // 通过 Unwrap、errors.Is 和 errors.AsType 检查原始原因。
 type RequestError struct {
-	Phase string // prepare、hook、transport、read、decode 或 middleware。
+	Phase string // 失败阶段，使用 PhasePrepare、PhaseHook 等阶段常量判断。
 	Err   error  // 原始原因，仅显式解包时可见。
 }
 
@@ -73,26 +73,26 @@ func withErrorKind(kind, cause error) (err error) {
 
 func (s *requestLog) failure(cause error) (err error) {
 	switch s.phase {
-	case "hook":
+	case PhaseHook:
 		cause = withErrorKind(ErrRequestHook, cause)
-	case "transport":
+	case PhaseTransport:
 		cause = withErrorKind(ErrTransport, cause)
-	case "read":
+	case PhaseRead:
 		cause = withErrorKind(ErrResponseRead, cause)
-	case "decode":
+	case PhaseDecode:
 		cause = withErrorKind(ErrResponseDecode, cause)
-	case "middleware":
+	case PhaseMiddleware:
 		cause = withErrorKind(ErrMiddleware, cause)
 	}
 	return &RequestError{Phase: s.phase, Err: cause}
 }
 
 func invalidMiddleware(reason string) (err error) {
-	return &RequestError{Phase: "middleware", Err: fmt.Errorf("%w: %s", ErrMiddleware, reason)}
+	return &RequestError{Phase: PhaseMiddleware, Err: fmt.Errorf("%w: %s", ErrMiddleware, reason)}
 }
 
 func middlewareViolation(cause error) (err error) {
-	return &RequestError{Phase: "middleware", Err: errors.Join(ErrMiddleware, cause)}
+	return &RequestError{Phase: PhaseMiddleware, Err: errors.Join(ErrMiddleware, cause)}
 }
 
 func middlewareError(cause error) (err error) {
@@ -104,7 +104,7 @@ func middlewareError(cause error) (err error) {
 	if requestError || statusError {
 		return cause
 	}
-	return &RequestError{Phase: "middleware", Err: withErrorKind(ErrMiddleware, cause)}
+	return &RequestError{Phase: PhaseMiddleware, Err: withErrorKind(ErrMiddleware, cause)}
 }
 
 func contextResult(ctx context.Context, original error) (err error) {

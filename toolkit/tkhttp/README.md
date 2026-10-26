@@ -178,6 +178,28 @@ Response.StatusCode 为收到的 HTTP 状态码，即使正文读取、超限或
 
 包级错误、自定义类型及包装助手统一声明在 [error.go](error.go)。`*RequestError` 提供 Phase 和 Unwrap；通过 errors.Is 判断稳定类别，通过 errors.AsType 获取状态码或底层网络/JSON 原因。Error 文本保持受控，显式解包后应自行决定如何处理原始错误。
 
+阶段常量集中声明在 [phase.go](phase.go)，用于判断 `RequestError.Phase` 和日志的 `http.phase`。常量保留原有字符串值，`RequestError.Phase` 仍为 `string`，可直接与常量比较。
+
+| 阶段常量 | 值 | 含义 |
+| --- | --- | --- |
+| PhasePrepare | prepare | 参数校验与请求准备 |
+| PhaseHook | hook | 签名或鉴权钩子 |
+| PhaseTransport | transport | HTTP 发送 |
+| PhaseRead | read | 响应正文读取 |
+| PhaseStatus | status | HTTP 状态码检查 |
+| PhaseDecode | decode | JSON 响应解码 |
+| PhaseComplete | complete | 整次调用成功完成 |
+| PhaseMiddleware | middleware | 中间件失败或违反调用约定 |
+
+```go
+failure, ok := errors.AsType[*tkhttp.RequestError](err)
+if ok && failure.Phase == tkhttp.PhaseRead {
+    // 响应读取失败；已有响应时仍可从 response 获取状态码。
+}
+```
+
+非 2xx 返回 `StatusError`，对应日志阶段为 `PhaseStatus`；成功调用的日志阶段为 `PhaseComplete`。
+
 | 错误 | 含义 |
 | --- | --- |
 | ErrInvalidConfig | 客户端配置或注入依赖无效 |
