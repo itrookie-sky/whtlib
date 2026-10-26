@@ -48,16 +48,31 @@ func FindUp(start, marker string) (dir string, err error) {
 	}
 }
 
-// JoinWithin 将非空相对路径拼接到 base 内，返回绝对路径；. 表示 base 本身。
+// JoinWithin 将多个相对路径分段拼接到 base 内，返回绝对路径。
+// 空分段会被忽略；未传分段或全部为空时返回规范化后的绝对 base。
+// 每个分段都不能是绝对路径、根路径或带卷名的路径，拼接清理后不能越出 base。
 // 仅做词法检查，不要求路径存在，不防止符号链接逃逸；文件访问边界请使用 os.Root。
-func JoinWithin(base, relative string) (joined string, err error) {
+func JoinWithin(base string, elems ...string) (joined string, err error) {
 	root, err := absolutePath(base)
 	if err != nil {
 		return
 	}
-	if relative == "" || strings.ContainsRune(relative, '\x00') {
-		err = pathError("join within", relative, ErrInvalidPath)
-		return
+	for _, elem := range elems {
+		if elem == "" {
+			continue
+		}
+		if strings.ContainsRune(elem, '\x00') {
+			err = pathError("join within", elem, ErrInvalidPath)
+			return
+		}
+		if filepath.IsAbs(elem) || filepath.VolumeName(elem) != "" || os.IsPathSeparator(elem[0]) {
+			err = pathError("join within", elem, ErrOutsideBase)
+			return
+		}
+	}
+	relative := filepath.Join(elems...)
+	if relative == "" {
+		return root, nil
 	}
 	if !filepath.IsLocal(relative) {
 		err = pathError("join within", relative, ErrOutsideBase)

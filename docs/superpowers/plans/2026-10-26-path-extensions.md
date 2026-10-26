@@ -6,7 +6,7 @@
 ## 接口与边界
 
 - `filepathx.FindUp(start, marker string) (dir string, err error)`：从已有目录向上寻找单个标记名，返回绝对目录，不改变 cwd；未找到使用 `fs.ErrNotExist`，其他文件系统错误保留错误链。
-- `filepathx.JoinWithin(base, relative string) (joined string, err error)`：返回 base 内的绝对路径，拒绝空路径、绝对子路径和词法越界。
+- `filepathx.JoinWithin(base string, elems ...string) (joined string, err error)`：返回 base 内的绝对路径，拒绝空 base、各分段中的绝对路径或卷名，以及拼接后的词法越界；空分段忽略，无分段时返回绝对 base。
 - `filepathx.RelWithin(base, target string) (relative string, err error)`：两个相对参数均相对于 cwd 解释，相同目录返回 `.`，越界报错。
 - `filepathx.ExpandHome(name string) (expanded string, err error)`：展开 `~` 和 `~/`，不展开环境变量，不支持 `~user`。
 - `filepathx.Stem(name string) (stem string)`：去掉文件名最后的扩展名；`.env` 保留，`.env.local` 返回 `.env`；没有文件名时返回空字符串。

@@ -5,7 +5,7 @@
 | 接口 | 用途 |
 | --- | --- |
 | `FindUp(start, marker) (string, error)` | 从已有目录向上查找包含标记的最近目录，返回绝对路径，不改变 cwd |
-| `JoinWithin(base, relative) (string, error)` | 把非空相对路径拼到 base 内，返回绝对路径 |
+| `JoinWithin(base string, elems ...string) (string, error)` | 把多个相对路径分段拼到 base 内，返回绝对路径 |
 | `RelWithin(base, target) (string, error)` | 确认 target 位于 base 内后计算相对路径 |
 | `ExpandHome(name) (string, error)` | 展开 `~`、`~/`；Windows 也支持反斜杠 |
 | `Stem(name) string` | 取文件名并删除最后一个扩展名 |
@@ -16,7 +16,7 @@ root, err := filepathx.FindUp(".", "go.mod")
 if err != nil {
     return err
 }
-configPath, err := filepathx.JoinWithin(root, "config/app.json")
+configPath, err := filepathx.JoinWithin(root, "config", "app.json")
 if err != nil {
     return err
 }
@@ -27,9 +27,13 @@ if err != nil {
 _ = relative
 ```
 
-`JoinWithin`、`RelWithin` 不要求路径存在。`.` 表示目录自身；两个接口都拒绝空路径。
+`JoinWithin`、`RelWithin` 不要求路径存在。`.` 表示目录自身；base 必须非空。
+`JoinWithin` 忽略空分段，不传分段或全部为空时返回规范化后的绝对 base。
 `RelWithin` 的相对参数均相对于当前工作目录解释，例如 `RelWithin("data", "data/a")` 返回 `a`。
-`JoinWithin` 拒绝绝对子路径和清理后逃出 base 的路径；`RelWithin` 拒绝同前缀的兄弟目录。
+`RelWithin` 的 target 必须非空，并拒绝同前缀的兄弟目录。
+`JoinWithin` 每个分段都拒绝绝对路径、根路径和卷名；拼接清理后的整体相对路径不能逃出 base。
+例如 `JoinWithin(root, "config", "..", "app.json")` 合法，`JoinWithin(root, "..", "app.json")` 报错。
+原有 `JoinWithin(base, relative)` 直接调用方式保持兼容；若将函数赋给固定二参数的函数变量，需同步调整变量类型。
 
 以上限制只做词法判断，不解析符号链接。若需要实际限制文件访问范围，应使用标准库 `os.Root`。
 Unix 上反斜杠是普通字符；处理外部平台的路径前应先确定其格式。

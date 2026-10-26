@@ -30,7 +30,7 @@ func TestWithin(t *testing.T) {
 		{name: "parent", base: base, path: "..", err: ErrOutsideBase},
 		{name: "escape", base: base, path: "a/../../b", err: ErrOutsideBase},
 		{name: "absolute", base: base, path: filepath.Join(base, "a"), err: ErrOutsideBase},
-		{name: "empty child", base: base, err: ErrInvalidPath},
+		{name: "empty child", base: base, want: base},
 		{name: "empty base", path: "a", err: ErrInvalidPath},
 		{name: "nul child", base: base, path: "a\x00b", err: ErrInvalidPath},
 		{name: "nul base", base: "a\x00b", path: "a", err: ErrInvalidPath},
@@ -68,6 +68,38 @@ func TestWithin(t *testing.T) {
 	}
 }
 
+func TestJoinWithinMultipleElements(t *testing.T) {
+	base := t.TempDir()
+	for _, tc := range []struct {
+		name  string
+		elems []string
+		want  string
+		err   error
+	}{
+		{name: "no elements", want: base},
+		{name: "empty elements", elems: []string{"", ""}, want: base},
+		{name: "multiple", elems: []string{"config", "prod", "app.json"}, want: filepath.Join(base, "config", "prod", "app.json")},
+		{name: "ignore empty", elems: []string{"", "config", "", "app.json", ""}, want: filepath.Join(base, "config", "app.json")},
+		{name: "parent within base", elems: []string{"config", "..", "app.json"}, want: filepath.Join(base, "app.json")},
+		{name: "back to base", elems: []string{"config", ".."}, want: base},
+		{name: "escape", elems: []string{"config", "..", "..", "app.json"}, err: ErrOutsideBase},
+		{name: "absolute later", elems: []string{"config", base}, err: ErrOutsideBase},
+		{name: "root later", elems: []string{"config", "/"}, err: ErrOutsideBase},
+		{name: "nul later", elems: []string{"config", "a\x00b", ".."}, err: ErrInvalidPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := JoinWithin(base, tc.elems...)
+			if got != tc.want || !errors.Is(err, tc.err) {
+				t.Fatalf("JoinWithin = %q, %v; want %q, %v", got, err, tc.want, tc.err)
+			}
+		})
+	}
+	_, err := JoinWithin("")
+	if !errors.Is(err, ErrInvalidPath) {
+		t.Fatalf("empty base = %v", err)
+	}
+}
+
 func TestWithinPlatformPaths(t *testing.T) {
 	base := t.TempDir()
 	if runtime.GOOS != "windows" {
@@ -82,6 +114,12 @@ func TestWithinPlatformPaths(t *testing.T) {
 		_, err := JoinWithin(base, name)
 		if !errors.Is(err, ErrOutsideBase) {
 			t.Fatalf("JoinWithin(%q) = %v", name, err)
+		}
+	}
+	for _, name := range []string{`C:\child`, `C:child`, `\child`, `\\server\share`, "CON"} {
+		_, err := JoinWithin(base, "parent", name)
+		if !errors.Is(err, ErrOutsideBase) {
+			t.Fatalf("later Windows element %q = %v", name, err)
 		}
 	}
 	_, err := RelWithin(`C:\base`, `D:\target`)
