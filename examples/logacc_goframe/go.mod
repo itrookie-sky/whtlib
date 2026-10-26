@@ -1,6 +1,6 @@
 module github.com/itrookie-sky/whtlib/examples/logacc_goframe
 
-go 1.26.3
+go 1.27.3
 
 require (
 	github.com/gogf/gf/v2 v2.9.0

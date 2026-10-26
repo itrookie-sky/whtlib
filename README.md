@@ -2,6 +2,8 @@
 
 A lightweight, framework-independent Go library providing reusable core components and utilities, built for simplicity, reliability, and long-term maintainability.
 
+最低 Go 版本：**1.27.3**。
+
 ## 目录结构
 
 ```text
