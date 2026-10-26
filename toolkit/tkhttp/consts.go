@@ -1,5 +1,8 @@
 package tkhttp
 
+// headerRequestID 指定请求日志从请求和响应中读取的请求编号头。
+const headerRequestID = "X-Request-ID"
+
 // 请求阶段常量用于判断 RequestError.Phase 和日志中的 http.phase。
 // 使用字符串常量，兼容现有字段类型及日志值。
 const (

@@ -144,7 +144,9 @@ var factory tkhttp.LogAccFactory = func() (acc adapter.LogAcc) {
 
 每次调用独立累计 `http` 元数据和 `biz` 业务字段，在统一出口只调用一次 Info/Warn/Error。成功用 Info，3xx/4xx 和主动取消用 Warn，其他失败用 Error；参数错误同样记录，初始化错误由调用方处理。
 
-`http` 包含 method、脱敏 url（仅 scheme/host/path）、statusCode、requestBytes、responseBytes、cost（可读耗时字符串）、phase、errorKind。默认不记录 query 值、请求/响应正文、Header、鉴权值或原始错误文本。业务字段仅放入 biz，不覆盖内置 http 组。trace 等 context 字段由注入实现提取，取消后仍传原 context 打印。不得通过业务字段或工厂设置的公共字段写入不希望输出的数据。
+`http` 包含 method、脱敏 url（仅 scheme/host/path）、statusCode、requestBytes、responseBytes、cost（可读耗时字符串）、phase、errorKind。默认分别读取请求头和最终响应头的 `X-Request-ID`，写入 `http.requestRequestId` 和 `http.responseRequestId`，各自缺失或为空时省略对应字段。请求构造成功后采集请求编号，默认请求头与本次请求头合并后读取，签名钩子覆盖该请求头时使用覆盖后的值；读取或解码失败时仍可记录已收到的响应编号，中间件替换或合成响应时读取最终返回响应的编号。
+
+除上述请求编号外，默认不记录 Header、query 值、请求/响应正文、鉴权值或原始错误文本。业务字段仅放入 biz，不覆盖内置 http 组。context 字段仍由注入的日志实现按其配置提取，取消后仍传原 context 打印。不得通过业务字段或工厂设置的公共字段写入不希望输出的数据。
 
 容器在调用时复制；LogFields 的嵌套 map、slice、array 也复制。指针、结构体中的引用对象和 JSON 输入仍需由调用方保证调用期间不变，同一个 Result 不能被并发写入。工厂设置的公共字段若引用可变对象，也需自行保证同步。
 

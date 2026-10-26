@@ -15,6 +15,7 @@ type requestLog struct {
 	phase         string
 	method        string
 	url           string
+	requestID     string
 	requestBytes  int
 	responseBytes int
 	biz           map[string]any
@@ -40,22 +41,28 @@ func (s *requestLog) finish(ctx context.Context, response **Response, result *er
 		return
 	}
 	status := 0
+	responseRequestID := ""
 	if *response != nil {
 		status = (*response).StatusCode
+		responseRequestID = (*response).Header.Get(headerRequestID)
 	}
-	s.acc.Update(map[string]any{
-		"http": map[string]any{
-			"method":        s.method,
-			"url":           s.url,
-			"statusCode":    status,
-			"requestBytes":  s.requestBytes,
-			"responseBytes": s.responseBytes,
-			"cost":          time.Since(s.start).String(),
-			"phase":         s.phase,
-			"errorKind":     errorKind(*result, s.phase),
-		},
-		"biz": s.biz,
-	})
+	fields := map[string]any{
+		"method":        s.method,
+		"url":           s.url,
+		"statusCode":    status,
+		"requestBytes":  s.requestBytes,
+		"responseBytes": s.responseBytes,
+		"cost":          time.Since(s.start).String(),
+		"phase":         s.phase,
+		"errorKind":     errorKind(*result, s.phase),
+	}
+	if s.requestID != "" {
+		fields["requestRequestId"] = s.requestID
+	}
+	if responseRequestID != "" {
+		fields["responseRequestId"] = responseRequestID
+	}
+	s.acc.Update(map[string]any{"http": fields, "biz": s.biz})
 	if *result == nil {
 		s.acc.Info(ctx, "HTTP 请求完成")
 		return

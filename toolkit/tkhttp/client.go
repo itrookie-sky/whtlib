@@ -197,6 +197,7 @@ func (c *Client) execute(ctx context.Context, method, target string, configs []R
 		return
 	}
 	state.url = (&url.URL{Scheme: request.URL.Scheme, Host: request.URL.Host, Path: request.URL.Path, RawPath: request.URL.RawPath}).String()
+	state.requestID = request.Header.Get(headerRequestID)
 	state.requestBytes = len(body)
 	err = ctx.Err()
 	if err != nil {
@@ -206,6 +207,7 @@ func (c *Client) execute(ctx context.Context, method, target string, configs []R
 	if c.hook != nil {
 		state.phase = PhaseHook
 		err = c.applyHook(ctx, request, body)
+		state.requestID = request.Header.Get(headerRequestID)
 		if err != nil {
 			err = state.failure(contextResult(ctx, err))
 			return
