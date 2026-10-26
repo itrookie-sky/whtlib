@@ -18,8 +18,10 @@ whtlib/
 │   ├── tktoken/  # 会话、旧 token 协议、标准 HTTP 中间件
 │   └── tkkafka/  # Kafka 投递、消费、重试及分区提交
 ├── extension/    # Go 标准库功能扩展
+│   ├── filepathx/ # 本地路径查找、目录范围判断与文件名处理
 │   ├── jsonx/    # encoding/json 扩展
 │   ├── logx/     # slog 扩展及文件轮转
+│   ├── pathx/    # 斜杠路径的分段前缀判断与裁剪
 │   └── reflectx/ # reflect 扩展，合并 plreflect 与 lib/libreflect
 └── platform/     # 第三方平台 API 封装
 ```
@@ -55,6 +57,11 @@ whtlib/
 ## 签名验签
 
 [tksign 使用说明](toolkit/tksign/README.md)：通过 `WithPrivateKey`、`WithPublicKey` 按需配置密钥，支持 PEM、Base64 和 DER，统一提供 RSA、RSA-PSS、ECDSA 和 Ed25519 签名验签。字符串入口默认使用 Base64，也可配置 Base64URL 或 Hex；仅传私钥时自动导出验签公钥。
+
+## 路径扩展
+
+- [filepathx](extension/filepathx/README.md)：向上查找标记目录、目录内拼接与相对路径、用户目录展开、文件名及扩展名处理。目录范围检查是词法判断，不解析符号链接。
+- [pathx](extension/pathx/README.md)：基于标准库 path，按完整分段判断和裁剪路径前缀，避免 `/api/v1` 误匹配 `/api/v10`。
 
 ## 迁移组件
 

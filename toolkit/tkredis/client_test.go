@@ -158,18 +158,27 @@ func TestScriptsReloadAndRegisterConcurrently(t *testing.T) {
 	if !errors.Is(err, ErrScriptNotFound) {
 		t.Fatalf("missing script error = %v", err)
 	}
-	path := filepath.Join(t.TempDir(), "from_file.lua")
-	err = os.WriteFile(path, []byte("return 9"), 0o600)
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = client.ScriptLoadByPath(ctx, path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	value, err = client.EvalSha(ctx, "from_file", nil)
-	if err != nil || value != int64(9) {
-		t.Fatalf("file script result = %v, %v", value, err)
+	for _, tc := range []struct {
+		file string
+		name string
+	}{
+		{file: "from_file.lua", name: "from_file"},
+		{file: ".hidden", name: ".hidden"},
+		{file: "multi.part.lua", name: "multi.part"},
+	} {
+		path := filepath.Join(t.TempDir(), tc.file)
+		err = os.WriteFile(path, []byte("return 9"), 0o600)
+		if err != nil {
+			t.Fatal(err)
+		}
+		err = client.ScriptLoadByPath(ctx, path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		value, err = client.EvalSha(ctx, tc.name, nil)
+		if err != nil || value != int64(9) {
+			t.Fatalf("file %s script result = %v, %v", tc.file, value, err)
+		}
 	}
 }
 

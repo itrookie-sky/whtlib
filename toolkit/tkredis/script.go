@@ -4,9 +4,10 @@ import (
 	"context"
 	"errors"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/itrookie-sky/whtlib/extension/filepathx"
 
 	"github.com/redis/go-redis/v9"
 )
@@ -43,7 +44,7 @@ func (c *Client) ScriptLoadByPath(ctx context.Context, scriptPath string) (err e
 	if err != nil {
 		return
 	}
-	name := strings.TrimSuffix(filepath.Base(scriptPath), filepath.Ext(scriptPath))
+	name := filepathx.Stem(scriptPath)
 	err = c.ScriptLoad(ctx, name, string(script))
 	return
 }
