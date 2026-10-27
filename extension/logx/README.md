@@ -77,6 +77,8 @@ logx.Default().Infof(ctx, "订单：%s", "o123")
 
 `Default()` 始终返回同一个实例。仅导入包或调用 Default 不创建文件；第一次打印或 SetConfig 才初始化输出资源，默认使用终端。包级 Debug、Info、Warn、Error、Log 及带 f 的方法代理同一实例，并保持正确的业务调用行号。`logx.Skip(n)` 创建单例的派生实例，`logx.Close()` 关闭单例；关闭后不自动重建。
 
+`logx.Clone()` 返回全局实例的配置快照，等价于 `logx.Default().Clone()`，需要单独处理返回错误并 Close。
+
 单例属于 logx，不修改 `slog.Default()`。如需设置文件路径，请在第一次打印之前调用 SetConfig，避免先初始化默认文件。
 
 ## 修改当前实例配置
@@ -93,7 +95,39 @@ SetConfig 返回原来的 `*Logger`，WriteFile 始终生效（含默认 false�
 
 因此，SetConfig 不能用零值重置 Skip、FullPath、RotateBackupLimit；需要这些重置行为时创建新实例。轮转的 -1 禁用值可正常传入。
 
-配置变更与当前实例的打印、Close 同步，每条日志使用完整的一版配置。New 和 Skip 创建的实例各自持有独立的 loggerCore，SetConfig 和 Close 不影响其他实例。验证、新文件初始化或共享策略检查失败时，输出错误和堆栈并保留旧配置；成功切换后释放旧文件引用，旧资源关闭失败仅输出诊断。
+配置变更与当前实例的打印、Clone、Close 同步，每条日志使用完整的一版配置。New、Clone 和 Skip 创建的实例各自持有独立的 loggerCore，SetConfig 和 Close 不影响其他实例。验证、新文件初始化或共享策略检查失败时，输出错误和堆栈并保留旧配置；成功切换后释放旧文件引用，旧资源关闭失败仅输出诊断。
+
+## 克隆日志配置
+
+`(*Logger).Clone() (*Logger, error)` 取得当前配置的独立快照，适合在组件初始化时派生、调整后长期复用：
+
+```go
+orderLogger, err := logger.Clone()
+if err != nil {
+    return err
+}
+defer orderLogger.Close()
+
+orderLogger.SetConfig(logx.Config{
+    WriteFile: true, // 此处沿用开启文件输出的配置；SetConfig 中该字段始终生效。
+    Level:     slog.LevelDebug,
+})
+orderLogger.Debug(ctx, "订单处理开始")
+
+backend := logx.NewLoggerAdapter(orderLogger)
+acc := logx.NewLogAcc(logx.WithLogger(backend))
+acc.SetValue("orderId", "o123").Info(ctx, "订单处理完成")
+```
+
+克隆继承当前 Level 快照、TraceKey、ContextFields、文件配置和 Skip，不额外增加调用跳过层数。
+ContextFields 复制切片，上下文 key 保留原有身份；函数回调和其他引用对象按配置值继承。
+克隆与源实例的 SetConfig、Close 各自独立。共享同一文件时仍使用同一个 Writer、轮转策略和维护任务，
+每个实例持有独立文件引用，最后一个实例关闭后才释放文件。同文件轮转参数须继续遵循共享一致性约束。
+
+Clone 可与源实例的打印、SetConfig、Close 并发执行，取得完整快照；已经关闭的源返回 `os.ErrClosed`。
+nil 或未初始化的 Logger 返回 `ErrInvalidConfig`，可使用 `errors.Is` 判断。
+Clone 与 Skip 复用内部派生逻辑；Skip 继续额外调整调用层数。
+LogAcc 通过 NewLogAcc 创建，每次调用可以共享克隆后的日志后端。
 
 ## 私有全局文件管理器
 

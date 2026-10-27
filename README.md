@@ -44,7 +44,7 @@ whtlib/
 
 ## 日志组件
 
-[logx 使用说明](extension/logx/README.md)：基于标准库 slog，支持 ctx 字段、Skip、SetConfig、全局单例、独立实例、私有全局文件管理和内置文件轮转。分割阈值与保留时间可配置，归档默认保留 24h。
+[logx 使用说明](extension/logx/README.md)：基于标准库 slog，支持 ctx 字段、Skip、Clone 配置快照、SetConfig、全局单例、独立实例、私有全局文件管理和内置文件轮转。分割阈值与保留时间可配置，归档默认保留 24h。
 
 ## 通用日志接口
 

@@ -49,17 +49,9 @@ func (l *Logger) Skip(n int) (logger *Logger) {
 	if n < 0 || n > int(^uint(0)>>1)-l.skip || baseSkip > int(^uint(0)>>1)-l.skip-n {
 		panic("logx: invalid skip")
 	}
-	config, err := BuildDefaultConfig(l.core.config)
+	clone, err := l.cloneLocked(l.skip + n)
 	if err != nil {
 		panic(err)
-	}
-	clone := &Logger{core: &loggerCore{config: config, closed: l.core.closed}, skip: l.skip + n}
-	if l.core.handler != nil && !l.core.closed {
-		var lease *fileLease
-		if l.core.handler.state.lease != nil {
-			lease = sharedFiles.retain(l.core.handler.state.lease)
-		}
-		clone.core.handler = &handler{config: config, state: &outputState{writer: l.core.handler.state.writer, lease: lease}}
 	}
 	return clone
 }
