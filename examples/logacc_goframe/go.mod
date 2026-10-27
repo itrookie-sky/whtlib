@@ -4,7 +4,7 @@ go 1.27.3
 
 require (
 	github.com/gogf/gf/v2 v2.10.3
-	github.com/itrookie-sky/whtlib v0.0.0
+	github.com/itrookie-sky/whtlib v1.0.0
 )
 
 require (
