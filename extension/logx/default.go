@@ -2,6 +2,7 @@ package logx
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 )
 
@@ -12,7 +13,7 @@ func init() {
 	var err error
 	defaultLogger, err = New(Config{})
 	if err != nil {
-		panic("logx: defaultLogger init failed")
+		panic(fmt.Errorf("logx: defaultLogger init failed, %w", err))
 	}
 }
 
