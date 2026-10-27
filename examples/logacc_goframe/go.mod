@@ -3,7 +3,7 @@ module github.com/itrookie-sky/whtlib/examples/logacc_goframe
 go 1.27.3
 
 require (
-	github.com/gogf/gf/v2 v2.9.0
+	github.com/gogf/gf/v2 v2.10.3
 	github.com/itrookie-sky/whtlib v0.0.0
 )
 
