@@ -22,6 +22,11 @@ func Default() (logger *Logger) {
 	return defaultLogger
 }
 
+// Clone 克隆全局 Logger 的当前配置，返回需要独立 Close 的实例。
+func Clone() (logger *Logger, err error) {
+	return Default().Clone()
+}
+
 // SetConfig 更新全局单例配置，返回同一个实例。
 func SetConfig(config Config) (logger *Logger) {
 	return Default().SetConfig(config)
