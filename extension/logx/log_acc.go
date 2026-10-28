@@ -8,6 +8,7 @@ import (
 	"os"
 	"runtime/debug"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -89,32 +90,18 @@ func (a *LogAcc) Skip(n int) {
 	a.skip += n
 }
 
-// snapshot 先校验完整键值对，再一次性更新并复制字段，避免部分写入。
-func (a *LogAcc) snapshot(args []any) (fields map[string]any, logger adapter.Logger, start time.Time, skip int) {
-	if len(args)%2 != 0 {
-		panic("logx: LogAcc requires key/value pairs")
-	}
-	for i := 0; i < len(args); i += 2 {
-		if _, ok := args[i].(string); !ok {
-			panic("logx: LogAcc field key must be a string")
-		}
-	}
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if a.fields == nil {
-		a.fields = make(map[string]any)
-	}
-	for i := 0; i < len(args); i += 2 {
-		a.fields[args[i].(string)] = args[i+1]
-	}
+// snapshot 读取配置和字段快照，打印不修改已累计的字段。
+func (a *LogAcc) snapshot() (fields map[string]any, logger adapter.Logger, start time.Time, skip int) {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
 	return maps.Clone(a.fields), a.logger, a.start, a.skip
 }
 
-func (a *LogAcc) output(ctx context.Context, level slog.Level, message string, args []any) {
+func (a *LogAcc) output(ctx context.Context, level slog.Level, args []any) {
 	if reflectx.IsNil(ctx) {
 		panic("logx: nil context")
 	}
-	fields, logger, start, skip := a.snapshot(args)
+	fields, logger, start, skip := a.snapshot()
 	if reflectx.IsNil(logger) {
 		logger = NewLoggerAdapter(nil)
 	}
@@ -129,28 +116,28 @@ func (a *LogAcc) output(ctx context.Context, level slog.Level, message string, a
 		panic("logx: Logger.Skip returned nil")
 	}
 	// 惰性编码保留后端级别过滤能力，不向普通日志接口传入结构化键值对。
-	data := &logAccMessage{message: message, fields: fields, start: start}
+	data := &logAccMessage{args: slices.Clone(args), fields: fields, start: start}
 	switch level {
 	case slog.LevelDebug:
-		view.Debug(ctx, "", data)
+		view.Debug(ctx, data)
 	case slog.LevelWarn:
-		view.Warn(ctx, "", data)
+		view.Warn(ctx, data)
 	case slog.LevelError:
-		view.Error(ctx, "", data)
+		view.Error(ctx, data)
 	default:
-		view.Info(ctx, "", data)
+		view.Info(ctx, data)
 	}
 }
 
 // logAccMessage 由后端在实际格式化正文时编码字段，持有独立快照。
 type logAccMessage struct {
-	message string
-	fields  map[string]any
-	start   time.Time
+	args   []any
+	fields map[string]any
+	start  time.Time
 }
 
 func (m *logAccMessage) String() (message string) {
-	message = m.message
+	message = strings.TrimSuffix(fmt.Sprintln(m.args...), "\n")
 	if !m.start.IsZero() {
 		message = fmt.Sprintf("[%s] %s", time.Since(m.start), message)
 	}
@@ -172,24 +159,24 @@ func (m *logAccMessage) String() (message string) {
 	return message + " " + string(data)
 }
 
-// Debug 合并可选键值对并打印当前字段快照。
-func (a *LogAcc) Debug(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelDebug, message, args)
+// Debug 按空格拼接全部正文参数并打印当前字段快照。
+func (a *LogAcc) Debug(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelDebug, args)
 }
 
-// Info 合并可选键值对并打印当前字段快照。
-func (a *LogAcc) Info(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelInfo, message, args)
+// Info 按空格拼接全部正文参数并打印当前字段快照。
+func (a *LogAcc) Info(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelInfo, args)
 }
 
-// Warn 合并可选键值对并打印当前字段快照。
-func (a *LogAcc) Warn(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelWarn, message, args)
+// Warn 按空格拼接全部正文参数并打印当前字段快照。
+func (a *LogAcc) Warn(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelWarn, args)
 }
 
-// Error 合并可选键值对并打印当前字段快照。
-func (a *LogAcc) Error(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelError, message, args)
+// Error 按空格拼接全部正文参数并打印当前字段快照。
+func (a *LogAcc) Error(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelError, args)
 }
 
 // SetErr 读取当前错误并覆盖 err 字段；nil 指针或 nil 错误保持已有字段。

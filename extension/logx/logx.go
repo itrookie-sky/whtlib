@@ -125,14 +125,7 @@ func (l *Logger) output(ctx context.Context, level slog.Level, message string, a
 	case outputFormatted:
 		message = fmt.Sprintf(message, args...)
 	case outputPlain:
-		if len(args) > 0 {
-			values := make([]any, 0, len(args)+1)
-			if message != "" {
-				values = append(values, message)
-			}
-			values = append(values, args...)
-			message = strings.TrimSuffix(fmt.Sprintln(values...), "\n")
-		}
+		message = strings.TrimSuffix(fmt.Sprintln(args...), "\n")
 	}
 	record := slog.NewRecord(time.Now(), level, message, pc)
 	if mode == outputStructured {
@@ -146,28 +139,28 @@ func (l *Logger) output(ctx context.Context, level slog.Level, message string, a
 }
 
 // Log 按指定级别输出消息，可变参数以空格拼接到正文。
-func (l *Logger) Log(ctx context.Context, level slog.Level, message string, args ...any) {
-	l.output(ctx, level, message, args, outputPlain)
+func (l *Logger) Log(ctx context.Context, level slog.Level, args ...any) {
+	l.output(ctx, level, "", args, outputPlain)
 }
 
 // Debug 输出调试日志。
-func (l *Logger) Debug(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelDebug, message, args, outputPlain)
+func (l *Logger) Debug(ctx context.Context, args ...any) {
+	l.output(ctx, slog.LevelDebug, "", args, outputPlain)
 }
 
 // Info 输出普通日志。
-func (l *Logger) Info(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelInfo, message, args, outputPlain)
+func (l *Logger) Info(ctx context.Context, args ...any) {
+	l.output(ctx, slog.LevelInfo, "", args, outputPlain)
 }
 
 // Warn 输出警告日志。
-func (l *Logger) Warn(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelWarn, message, args, outputPlain)
+func (l *Logger) Warn(ctx context.Context, args ...any) {
+	l.output(ctx, slog.LevelWarn, "", args, outputPlain)
 }
 
 // Error 输出错误日志。
-func (l *Logger) Error(ctx context.Context, message string, args ...any) {
-	l.output(ctx, slog.LevelError, message, args, outputPlain)
+func (l *Logger) Error(ctx context.Context, args ...any) {
+	l.output(ctx, slog.LevelError, "", args, outputPlain)
 }
 
 // Debugf 输出格式化调试日志。
@@ -358,20 +351,20 @@ func (a *loggerAdapter) output(ctx context.Context, level slog.Level, message st
 	view.output(ctx, level, message, args, mode)
 }
 
-func (a *loggerAdapter) Debug(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelDebug, message, args, outputPlain)
+func (a *loggerAdapter) Debug(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelDebug, "", args, outputPlain)
 }
 
-func (a *loggerAdapter) Info(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelInfo, message, args, outputPlain)
+func (a *loggerAdapter) Info(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelInfo, "", args, outputPlain)
 }
 
-func (a *loggerAdapter) Warn(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelWarn, message, args, outputPlain)
+func (a *loggerAdapter) Warn(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelWarn, "", args, outputPlain)
 }
 
-func (a *loggerAdapter) Error(ctx context.Context, message string, args ...any) {
-	a.output(ctx, slog.LevelError, message, args, outputPlain)
+func (a *loggerAdapter) Error(ctx context.Context, args ...any) {
+	a.output(ctx, slog.LevelError, "", args, outputPlain)
 }
 
 func (a *loggerAdapter) Debugf(ctx context.Context, format string, args ...any) {

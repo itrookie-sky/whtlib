@@ -120,19 +120,19 @@ func (a *recordingAcc) emit(ctx context.Context, level string) {
 	a.sink.mu.Unlock()
 }
 
-func (a *recordingAcc) Debug(ctx context.Context, message string, args ...any) {
+func (a *recordingAcc) Debug(ctx context.Context, args ...any) {
 	a.emit(ctx, "debug")
 }
 
-func (a *recordingAcc) Info(ctx context.Context, message string, args ...any) {
+func (a *recordingAcc) Info(ctx context.Context, args ...any) {
 	a.emit(ctx, "info")
 }
 
-func (a *recordingAcc) Warn(ctx context.Context, message string, args ...any) {
+func (a *recordingAcc) Warn(ctx context.Context, args ...any) {
 	a.emit(ctx, "warn")
 }
 
-func (a *recordingAcc) Error(ctx context.Context, message string, args ...any) {
+func (a *recordingAcc) Error(ctx context.Context, args ...any) {
 	a.emit(ctx, "error")
 }
 

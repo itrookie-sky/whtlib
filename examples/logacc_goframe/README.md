@@ -9,16 +9,17 @@ backend := NewGoFrameLogger(native)
 
 acc := logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
 acc.SetValue("orderId", "demo-001")
-acc.Info(ctx, "订单处理完成")
+args := []any{"订单处理完成", 123}
+acc.Info(ctx, args...)
 ```
 
 输出正文类似：
 
 ```text
-[35µs] 订单处理完成 {"orderId":"demo-001"}
+[35µs] 订单处理完成 123 {"orderId":"demo-001"}
 ```
 
-时间、级别、context 字段和源码位置由 GoFrame 配置控制。[logger.go](logger.go) 实现完整接口：普通方法按空格拼接正文，格式化方法使用 GoFrame 的 `*f` 方法，Warn 映射为 Warning。字段采用惰性格式化，GoFrame 过滤级别后才编码 JSON。
+时间、级别、context 字段和源码位置由 GoFrame 配置控制。[logger.go](logger.go) 实现完整接口：普通方法接收 `ctx context.Context, args ...any`，按空格拼接正文，允许空参数和非字符串首参；格式化方法保留 `format string` 并使用 GoFrame 的 `*f` 方法，Warn 映射为 Warning。LogAcc 字段通过 SetValue/Update 累计，打印参数全部作为正文。正文与字段采用惰性格式化，GoFrame 过滤级别后才拼接参数、编码 JSON。
 
 `Skip` 返回独立的借用视图，并补偿适配器自身调用层；GoFrame 的 Skip 是绝对值，此处保留原 StSkip 后设置新值。每次通过 GoFrame Logger 的 Clone 创建配置视图，避免修改注入实例。应先配置后端，再开始并发使用。后端资源由创建方管理，LogAcc 无需 Close。
 

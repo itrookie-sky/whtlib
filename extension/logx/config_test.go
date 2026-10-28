@@ -197,7 +197,10 @@ func TestDefaultSingletonAndCallers(t *testing.T) {
 	if !strings.Contains(logContents(t, path), filepath.Base(file)+":"+strconv.Itoa(line+1)+" global") {
 		t.Fatal("wrong caller")
 	}
-	for _, output := range []func(context.Context, string, ...any){Debug, Info, Warn, Error, Debugf, Infof, Warnf, Errorf} {
+	for _, output := range []func(context.Context, ...any){Debug, Info, Warn, Error} {
+		output(t.Context(), "method")
+	}
+	for _, output := range []func(context.Context, string, ...any){Debugf, Infof, Warnf, Errorf} {
 		output(t.Context(), "method")
 	}
 	Log(t.Context(), slog.LevelInfo, "custom")

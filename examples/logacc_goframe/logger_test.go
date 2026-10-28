@@ -48,8 +48,9 @@ func TestGoFrameLogAccAndCaller(t *testing.T) {
 	ctx := context.WithValue(t.Context(), key, "request-001")
 	acc := logx.NewLogAcc(logx.WithLogger(backend))
 	acc.SetValue("orderId", "demo")
+	acc.SetValue("count", 2)
 	_, file, line, _ := runtime.Caller(0)
-	acc.Info(ctx, "done", "count", 2)
+	acc.Info(ctx, "done")
 	output := buffer.String()
 	if !strings.Contains(output, filepath.Base(file)+":"+strconv.Itoa(line+1)) ||
 		!strings.Contains(output, `done {"count":2,"orderId":"demo"}`) || !strings.Contains(output, "request-001") {
@@ -83,7 +84,7 @@ func (v countedJSON) MarshalJSON() (data []byte, err error) {
 
 func TestGoFrameLevelsFormattingAndFiltering(t *testing.T) {
 	native, backend, buffer := newBackend()
-	for _, print := range []func(context.Context, string, ...any){backend.Debug, backend.Info, backend.Warn, backend.Error} {
+	for _, print := range []func(context.Context, ...any){backend.Debug, backend.Info, backend.Warn, backend.Error} {
 		print(t.Context(), "item", 1, "ready")
 	}
 	for _, print := range []func(context.Context, string, ...any){backend.Debugf, backend.Infof, backend.Warnf, backend.Errorf} {

@@ -65,7 +65,16 @@ func main() {
 
 traceId 固定在日期后的 [级别] 后，以 {值} 输出，不显示字段名和字符串外围引号，保留内部转义；缺失、nil 或空字符串时省略整个占位及分隔空格。其他上下文字段以 JSON 紧随其后，按配置顺序排列，缺失字段省略，全部缺失时不输出该区块及分隔空格。nil、typed nil 和空字符串省略；0 与 false 保留。JSON 编码失败会输出错误标记，其他日志内容仍尝试写入。所有打印方法及内部 output 均无返回值，编码和写入错误由 output 连同当前 goroutine 的调用堆栈直接写入 stderr，不经过配置的 Writer，避免递归；初始化与 Close 仍返回错误。
 
-普通方法将 message 与 args 按空格拼接为正文（使用 fmt.Sprintln 的参数格式，移除其追加的换行）；空 message 不添加前导空格，没有 args 时保留原正文。例如 Info(ctx, "订单", 123, "完成") 输出正文“订单 123 完成”。这些参数不按 slog 属性解析，不产生 !BADKEY。文本格式化使用 Infof 等方法；只有 LogAcc 的打印参数按键值对处理并输出行尾 JSON。ctx 取消仍可记录日志，nil ctx 会 panic。默认 Info 级别，Config.Level 在 New/SetConfig 时读取级别快照，之后通过 SetConfig 调整，外部 LevelVar 的变化不会传播到实例。
+普通方法统一接收 `ctx context.Context, args ...any`，将全部参数按空格拼接为正文（使用 fmt.Sprintln 的参数格式，移除其追加的换行）；不强制首个参数为字符串，无参数时正文为空。显式传入的空字符串仍是一个正文参数，参与空格分隔。例如 Info(ctx, "订单", 123, "完成") 输出正文“订单 123 完成”。这些参数不按 slog 属性解析，不产生 !BADKEY。文本格式化使用 Infof 等方法，保留 `format string`；LogAcc 的正文规则相同，累计字段另行输出为行尾 JSON。ctx 取消仍可记录日志，nil ctx 会 panic。默认 Info 级别，Config.Level 在 New/SetConfig 时读取级别快照，之后通过 SetConfig 调整，外部 LevelVar 的变化不会传播到实例。
+
+```go
+logger.Info(ctx) // 空正文。
+logger.Info(ctx, 123, true) // 非字符串首参，正文为 "123 true"。
+args := []any{"订单", 123, "完成"}
+logger.Info(ctx, args...)
+logx.Log(ctx, slog.LevelInfo, args...)
+logger.Infof(ctx, "订单=%d %s", 123, "完成")
+```
 
 ## 全局单例
 
@@ -211,7 +220,8 @@ defer wrapped.Close()
 acc := logx.NewLogAcc() // 默认使用全局 Logger
 acc.SetValue("orderId", "o123")
 acc.Update(map[string]any{"status": "created", "count": 1})
-acc.Info(ctx, "创建订单", "status", "done", "count", 2)
+acc.Update(map[string]any{"status": "done", "count": 2})
+acc.Info(ctx, "创建订单")
 ```
 
 `WithLogger` 接收 `adapter.Logger`，指定 logx 实例时先通过 `NewLoggerAdapter` 适配：
@@ -235,7 +245,14 @@ acc.Info(ctx, "创建订单")
 
 `NewGoFrameLogger` 为示例中的薄适配器，完整实现、HTTP 工厂及运行命令见 [GoFrame 示例](../../examples/logacc_goframe/README.md)。根模块不依赖 GoFrame；普通日志接口按正文拼接，LogAcc 将累计字段编码为正文末尾 JSON 后再交给后端，被过滤的日志不编码字段。
 
-`SetValue` 覆盖单个字段，`Update` 原子合并多个字段，均直接修改当前累积器且无返回值。Info/Debug/Warn/Error 的额外参数为 `key, value` 对，覆盖后的字段继续保留供后续打印使用；奇数参数或非 string key 会 panic，整批校验失败不会部分写入。所有打印方法必须传 ctx，无错误返回。
+`SetValue` 覆盖单个字段，`Update` 原子合并多个字段，均直接修改当前累积器且无返回值。Info/Debug/Warn/Error 接收 `ctx context.Context, args ...any`，全部参数作为正文，不修改累计字段，也不校验键值对；支持空参数、非字符串首参和切片展开。所有打印方法必须传 ctx，无错误返回。字段和正文都在日志后端通过级别过滤后才编码或格式化。
+
+```go
+acc.SetValue("orderId", "o123")
+args := []any{123, "处理完成"}
+acc.Info(ctx, args...) // 正文为 123 处理完成 {"orderId":"o123"}。
+acc.Info(ctx) // 仅输出累计字段 JSON。
+```
 
 `SetErr(*error)` 在调用时读取错误，保存 `err.Error()` 到 `err` 字段；nil 指针或 nil 错误不修改已有字段。不解析 GoFrame 错误码。例如在有命名返回值 err 的函数中：
 
@@ -269,4 +286,4 @@ factory := func() (acc adapter.LogAcc) {
 // 可通过 tkhttp.WithLogAcc(factory) 注入，每次调用都创建新实例。
 ```
 
-累积器不拥有 Logger，不需要 Close；打印时借用后端的 Skip 视图，`NewLoggerAdapter` 不增加 logx 文件引用。注入实例由调用方负责关闭；不传 WithLogger、传 nil 或 typed nil 时使用全局 logx Logger。零值 LogAcc 可用。使用后不要按值复制 LogAcc 结构体；需要独立累计时重新创建实例。并发安全范围是字段更新、起点、Skip 与快照，不包括字段值引用的可变对象；外部 map/slice/指针以及传给 SetErr 的 error 变量仍需调用方同步。快照完成后释放锁再编码、写入日志。
+累积器不拥有 Logger，不需要 Close；打印时借用后端的 Skip 视图，`NewLoggerAdapter` 不增加 logx 文件引用。注入实例由调用方负责关闭；不传 WithLogger、传 nil 或 typed nil 时使用全局 logx Logger。零值 LogAcc 可用。使用后不要按值复制 LogAcc 结构体；需要独立累计时重新创建实例。并发安全范围是字段更新、起点、Skip 与快照，不包括字段值和正文参数引用的可变对象；外部 map/slice/指针以及传给 SetErr 的 error 变量仍需调用方同步。快照完成后释放锁再编码、写入日志。

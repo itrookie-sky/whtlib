@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/gogf/gf/v2/os/glog"
 	"github.com/itrookie-sky/whtlib/adapter"
+
+	"github.com/gogf/gf/v2/os/glog"
 )
 
 var _ adapter.Logger = (*goFrameLogger)(nil)
@@ -46,36 +47,27 @@ func (l *goFrameLogger) view() (logger *glog.Logger) {
 
 // plainMessage 延迟拼接正文，让 GoFrame 先执行日志级别过滤。
 type plainMessage struct {
-	message string
-	args    []any
+	args []any
 }
 
 func (m plainMessage) String() (message string) {
-	if len(m.args) == 0 {
-		return m.message
-	}
-	values := make([]any, 0, len(m.args)+1)
-	if m.message != "" {
-		values = append(values, m.message)
-	}
-	values = append(values, m.args...)
-	return strings.TrimSuffix(fmt.Sprintln(values...), "\n")
+	return strings.TrimSuffix(fmt.Sprintln(m.args...), "\n")
 }
 
-func (l *goFrameLogger) Debug(ctx context.Context, message string, args ...any) {
-	l.view().Debug(ctx, plainMessage{message, args})
+func (l *goFrameLogger) Debug(ctx context.Context, args ...any) {
+	l.view().Debug(ctx, plainMessage{args: args})
 }
 
-func (l *goFrameLogger) Info(ctx context.Context, message string, args ...any) {
-	l.view().Info(ctx, plainMessage{message, args})
+func (l *goFrameLogger) Info(ctx context.Context, args ...any) {
+	l.view().Info(ctx, plainMessage{args: args})
 }
 
-func (l *goFrameLogger) Warn(ctx context.Context, message string, args ...any) {
-	l.view().Warning(ctx, plainMessage{message, args})
+func (l *goFrameLogger) Warn(ctx context.Context, args ...any) {
+	l.view().Warning(ctx, plainMessage{args: args})
 }
 
-func (l *goFrameLogger) Error(ctx context.Context, message string, args ...any) {
-	l.view().Error(ctx, plainMessage{message, args})
+func (l *goFrameLogger) Error(ctx context.Context, args ...any) {
+	l.view().Error(ctx, plainMessage{args: args})
 }
 
 func (l *goFrameLogger) Debugf(ctx context.Context, format string, args ...any) {

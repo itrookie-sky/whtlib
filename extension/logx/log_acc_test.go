@@ -27,14 +27,15 @@ func TestLogAccOverwriteAndSnapshot(t *testing.T) {
 	source := map[string]any{"three": "before"}
 	acc.Update(source)
 	source["three"] = "after"
-	acc.Info(t.Context(), "first", "one", 3, "nil", nil)
+	acc.Update(map[string]any{"one": 3, "nil": nil})
+	acc.Info(t.Context(), "first")
 	acc.Info(t.Context(), "second")
 	for _, line := range strings.Split(strings.TrimSpace(buffer.String()), "\n") {
 		if !strings.Contains(line, `{"nil":null,"one":3,"three":"before","two":true}`) {
 			t.Fatal(line)
 		}
 	}
-	fields, _, _, _ := acc.snapshot(nil)
+	fields, _, _, _ := acc.snapshot()
 	fields["one"] = "outside"
 	acc.Info(t.Context(), "isolated")
 	if strings.Contains(buffer.String(), "outside") {
@@ -45,7 +46,8 @@ func TestLogAccOverwriteAndSnapshot(t *testing.T) {
 // logAccHandle 模拟 lib 的函数级日志：先注册打印，再注册最终错误采集。
 func logAccHandle(ctx context.Context, handle func() (string, error), ops ...LogAccOptionFunc) (resRaw string, err error) {
 	acc := NewLogAcc(ops...)
-	defer acc.Info(ctx, "HandleDevice", "resRaw", &resRaw)
+	acc.SetValue("resRaw", &resRaw)
+	defer acc.Info(ctx, "HandleDevice")
 	defer acc.SetErr(&err)
 	acc.Update(map[string]any{"deviceCode": "device-001", "stage": "start"})
 	acc.SetValue("stage", "handle")
@@ -230,21 +232,14 @@ func TestLogAccConcurrentUpdatesAndPrint(t *testing.T) {
 	}
 }
 
-func TestLogAccInvalidPairsAreAtomic(t *testing.T) {
+func TestLogAccArgumentsPreserveFields(t *testing.T) {
 	acc := NewLogAcc()
 	for _, args := range [][]any{{"one"}, {"one", 1, 2, 3}} {
-		func() {
-			defer func() {
-				if recover() == nil {
-					t.Error("invalid pairs accepted")
-				}
-			}()
-			acc.snapshot(args)
-		}()
+		acc.Info(t.Context(), args...)
 	}
-	fields, _, _, _ := acc.snapshot(nil)
+	fields, _, _, _ := acc.snapshot()
 	if len(fields) != 0 {
-		t.Fatal("invalid batch partially applied")
+		t.Fatal("body arguments changed accumulated fields")
 	}
 }
 
@@ -252,7 +247,8 @@ func TestLogAccInvalidPairsAreAtomic(t *testing.T) {
 func logAccRequest(ctx context.Context, logger *Logger) (resRaw string, err error) {
 	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
 	acc.Skip(1)
-	defer acc.Debug(ctx, "DoRequest", "resRaw", &resRaw)
+	acc.SetValue("resRaw", &resRaw)
+	defer acc.Debug(ctx, "DoRequest")
 	defer acc.SetErr(&err)
 	acc.Update(map[string]any{"host": "example.test"})
 	resRaw = "final response"
@@ -295,11 +291,11 @@ func TestLogAccNewInstanceAndStartTime(t *testing.T) {
 	second := NewLogAcc(WithLogger(loggerBackend))
 	second.SetValue("source", "second")
 	second.Skip(1)
-	fields, backend, firstStart, skip := first.snapshot(nil)
+	fields, backend, firstStart, skip := first.snapshot()
 	if fields["source"] != "first" || len(fields) != 1 || backend != loggerBackend || firstStart != start || skip != 2 {
 		t.Fatalf("first instance changed: %v, %v, %d", fields, firstStart, skip)
 	}
-	fields, backend, secondStart, skip := second.snapshot(nil)
+	fields, backend, secondStart, skip := second.snapshot()
 	if fields["source"] != "second" || len(fields) != 1 || backend != loggerBackend || !secondStart.IsZero() || skip != 1 {
 		t.Fatalf("second instance shared state: %v, %v, %d", fields, secondStart, skip)
 	}

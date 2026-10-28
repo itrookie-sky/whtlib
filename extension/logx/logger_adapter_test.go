@@ -33,27 +33,24 @@ func (b *recordingBackend) Skip(n int) (logger adapter.Logger) {
 	return &recordingBackend{records: b.records, skip: b.skip + n}
 }
 
-func (b *recordingBackend) record(ctx context.Context, level, message string, args []any) {
-	if message != "" {
-		args = append([]any{message}, args...)
-	}
+func (b *recordingBackend) record(ctx context.Context, level string, args []any) {
 	*b.records = append(*b.records, backendRecord{ctx, level, strings.TrimSuffix(fmt.Sprintln(args...), "\n"), b.skip})
 }
 
-func (b *recordingBackend) Debug(ctx context.Context, message string, args ...any) {
-	b.record(ctx, "debug", message, args)
+func (b *recordingBackend) Debug(ctx context.Context, args ...any) {
+	b.record(ctx, "debug", args)
 }
 
-func (b *recordingBackend) Info(ctx context.Context, message string, args ...any) {
-	b.record(ctx, "info", message, args)
+func (b *recordingBackend) Info(ctx context.Context, args ...any) {
+	b.record(ctx, "info", args)
 }
 
-func (b *recordingBackend) Warn(ctx context.Context, message string, args ...any) {
-	b.record(ctx, "warn", message, args)
+func (b *recordingBackend) Warn(ctx context.Context, args ...any) {
+	b.record(ctx, "warn", args)
 }
 
-func (b *recordingBackend) Error(ctx context.Context, message string, args ...any) {
-	b.record(ctx, "error", message, args)
+func (b *recordingBackend) Error(ctx context.Context, args ...any) {
+	b.record(ctx, "error", args)
 }
 
 func TestLogAccUsesInjectedInterface(t *testing.T) {
@@ -62,8 +59,9 @@ func TestLogAccUsesInjectedInterface(t *testing.T) {
 	acc := NewLogAcc(WithLogger(backend), WithCost(time.Now()))
 	acc.Skip(3)
 	acc.SetValue("z", 2)
+	acc.SetValue("a", 1)
 	ctx := context.WithValue(t.Context(), testKey(100), "trace")
-	acc.Debug(ctx, "done", "a", 1)
+	acc.Debug(ctx, "done")
 	acc.Info(ctx, "done")
 	acc.Warn(ctx, "done")
 	acc.Error(ctx, "done")
@@ -88,7 +86,7 @@ func TestLoggerAdapterOutputAndCaller(t *testing.T) {
 	var buffer bytes.Buffer
 	native := newBufferedLogger(t, &buffer, Config{Level: slog.LevelDebug})
 	backend := NewLoggerAdapter(native)
-	for _, print := range []func(context.Context, string, ...any){backend.Debug, backend.Info, backend.Warn, backend.Error} {
+	for _, print := range []func(context.Context, ...any){backend.Debug, backend.Info, backend.Warn, backend.Error} {
 		print(t.Context(), "hello", 1, "world")
 	}
 	for _, print := range []func(context.Context, string, ...any){backend.Debugf, backend.Infof, backend.Warnf, backend.Errorf} {

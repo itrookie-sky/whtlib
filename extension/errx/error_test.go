@@ -45,10 +45,7 @@ type recordingLogger struct {
 }
 
 func (l *recordingLogger) Skip(n int) (logger adapter.Logger) { return l }
-func (l *recordingLogger) Error(ctx context.Context, message string, args ...any) {
-	if message != "" {
-		args = append([]any{message}, args...)
-	}
+func (l *recordingLogger) Error(ctx context.Context, args ...any) {
 	l.logger.ErrorContext(ctx, strings.TrimSuffix(fmt.Sprintln(args...), "\n"))
 }
 

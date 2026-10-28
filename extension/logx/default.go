@@ -43,28 +43,28 @@ func Skip(n int) (logger *Logger) {
 }
 
 // Log 使用全局单例按指定级别打印。
-func Log(ctx context.Context, level slog.Level, message string, args ...any) {
-	Default().output(ctx, level, message, args, outputPlain)
+func Log(ctx context.Context, level slog.Level, args ...any) {
+	Default().output(ctx, level, "", args, outputPlain)
 }
 
 // Debug 使用全局单例打印调试日志。
-func Debug(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelDebug, message, args, outputPlain)
+func Debug(ctx context.Context, args ...any) {
+	Default().output(ctx, slog.LevelDebug, "", args, outputPlain)
 }
 
 // Info 使用全局单例打印普通日志。
-func Info(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelInfo, message, args, outputPlain)
+func Info(ctx context.Context, args ...any) {
+	Default().output(ctx, slog.LevelInfo, "", args, outputPlain)
 }
 
 // Warn 使用全局单例打印警告日志。
-func Warn(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelWarn, message, args, outputPlain)
+func Warn(ctx context.Context, args ...any) {
+	Default().output(ctx, slog.LevelWarn, "", args, outputPlain)
 }
 
 // Error 使用全局单例打印错误日志。
-func Error(ctx context.Context, message string, args ...any) {
-	Default().output(ctx, slog.LevelError, message, args, outputPlain)
+func Error(ctx context.Context, args ...any) {
+	Default().output(ctx, slog.LevelError, "", args, outputPlain)
 }
 
 // Debugf 使用全局单例打印格式化调试日志。
