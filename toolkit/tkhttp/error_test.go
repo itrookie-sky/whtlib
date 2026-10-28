@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+
+	"github.com/itrookie-sky/whtlib/extension/errx"
 )
 
 type nilHTTPContext struct{ context.Context }
@@ -147,5 +149,27 @@ func TestReadLimitPreservesConcurrentReadError(t *testing.T) {
 	response, err := client.Get(t.Context(), "resource")
 	if !errors.Is(err, ErrResponseRead) || !errors.Is(err, ErrResponseTooLarge) || !errors.Is(err, cause) || response.StatusCode != 502 {
 		t.Fatalf("response=%+v err=%v", response, err)
+	}
+}
+
+func TestErrxPreservesErrorChain(t *testing.T) {
+	status := &StatusError{StatusCode: 503}
+	request := &RequestError{Phase: PhaseTransport, Err: errors.Join(ErrTransport, context.DeadlineExceeded, status)}
+	wrapped := errx.WithStack(errx.WithFields(request, map[string]any{"operation": "fetch"}))
+	if wrapped.Error() != request.Error() || strings.Contains(wrapped.Error(), "fetch") {
+		t.Fatalf("错误文本被元数据改变: %s", wrapped)
+	}
+	for _, target := range []error{request, status, ErrTransport, ErrHTTPStatus, context.DeadlineExceeded} {
+		if !errors.Is(wrapped, target) {
+			t.Errorf("错误类别丢失: %v", target)
+		}
+	}
+	gotRequest, ok := errors.AsType[*RequestError](wrapped)
+	if !ok || gotRequest != request {
+		t.Fatal("RequestError 类型丢失")
+	}
+	gotStatus, ok := errors.AsType[*StatusError](wrapped)
+	if !ok || gotStatus.StatusCode != 503 {
+		t.Fatal("StatusError 状态码丢失")
 	}
 }

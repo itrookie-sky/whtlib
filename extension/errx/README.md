@@ -1,7 +1,7 @@
 # errx
 
 在 Go 标准错误链之上提供调用堆栈、结构化字段、错误树遍历、业务码和诊断快照。
-只依赖标准库，适用于 Go 1.27.3 及以上版本。
+只依赖标准库，测试也不引用其他组件，适用于 Go 1.27.3 及以上版本。与日志、HTTP 等组件的联动验证和示例放在消费方。
 
 | 接口 | 返回值 | 用途 |
 | --- | --- | --- |
@@ -94,8 +94,6 @@ CodeError.Error 优先返回 Message，缺失时依次返回 Code、原始错误
 ```go
 detail := errx.Describe(err)
 logger.ErrorContext(ctx, "操作失败", "error", detail) // 标准 slog
-acc.SetValue("error", detail)
-acc.Error(ctx, "操作失败") // logx.LogAcc
 ```
 
 Description 的 Message、Code、Fields、Stack 分别为根错误文本、首个业务码、合并字段、首个堆栈。
@@ -106,7 +104,7 @@ Nodes 保留全部节点的 Type、Message、Code、Fields、Stack；Parent 是�
 Description 实现 `slog.LogValuer`，也能直接交给 JSON 编码器。
 字段值的 JSON 可编码性由调用方保证；快照与提取方法一样只浅复制字段值。
 Describe 会显式读取每层原始 Error 文本和源码路径，供内部诊断使用；它不等同于可直接返回给客户端的错误响应。
-例如 tkhttp.RequestError 的 Error 隐藏底层文本，但显式 Describe 仍会遍历并读取其底层原因。
+例如外部包装错误的 Error 隐藏底层文本时，显式 Describe 仍会遍历并读取其底层原因。
 
 外部错误可通过以下方法提供元数据，无需依赖 errx 的具体包装类型：
 

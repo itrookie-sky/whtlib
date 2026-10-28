@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/itrookie-sky/whtlib/adapter"
+	"github.com/itrookie-sky/whtlib/extension/errx"
 )
 
 func TestLogAccOverwriteAndSnapshot(t *testing.T) {
@@ -396,5 +397,58 @@ func TestLogAccTraceContext(t *testing.T) {
 				t.Fatalf("ctx or accumulated fields missing: %s", line)
 			}
 		})
+	}
+}
+
+// diagnosticLogger 只用于验证 LogAcc.Error 的借用视图及正文序列化路径。
+type diagnosticLogger struct {
+	adapter.Logger
+	logger *slog.Logger
+}
+
+func (l *diagnosticLogger) Skip(n int) (logger adapter.Logger) { return l }
+func (l *diagnosticLogger) Error(ctx context.Context, args ...any) {
+	l.logger.ErrorContext(ctx, strings.TrimSuffix(fmt.Sprintln(args...), "\n"))
+}
+
+func TestLogAccDiagnosticLogging(t *testing.T) {
+	base := &errx.CodeError{Code: "FAILED", Message: "operation failed"}
+	d := errx.Describe(errx.WithStack(errx.WithFields(base, map[string]any{"operation": "fetch"})))
+	var buffer bytes.Buffer
+	slogger := slog.New(slog.NewJSONHandler(&buffer, nil))
+	slogger.ErrorContext(t.Context(), "failed", "error", d)
+	var record map[string]any
+	err := json.Unmarshal(buffer.Bytes(), &record)
+	if err != nil {
+		t.Fatal(err)
+	}
+	detail, ok := record["error"].(map[string]any)
+	if !ok || detail["code"] != "FAILED" || detail["nodes"] == nil || detail["stack"] == nil {
+		t.Fatalf("slog 诊断: %s", buffer.String())
+	}
+	buffer.Reset()
+	acc := NewLogAcc(WithLogger(&diagnosticLogger{logger: slogger}))
+	acc.SetValue("error", d)
+	acc.Error(t.Context(), "failed")
+	record = nil
+	err = json.Unmarshal(buffer.Bytes(), &record)
+	if err != nil {
+		t.Fatalf("LogAcc 日志: %s, %v", buffer.String(), err)
+	}
+	message, ok := record["msg"].(string)
+	if !ok {
+		t.Fatalf("LogAcc 日志缺少正文: %s", buffer.String())
+	}
+	fieldsJSON, found := strings.CutPrefix(message, "failed ")
+	if !found {
+		t.Fatalf("LogAcc 正文: %s", message)
+	}
+	var fields map[string]errx.Description
+	err = json.Unmarshal([]byte(fieldsJSON), &fields)
+	if err != nil || fields["error"].Code != "FAILED" || len(fields["error"].Nodes) == 0 {
+		t.Fatalf("LogAcc 诊断: %s, %v", fieldsJSON, err)
+	}
+	if empty := errx.Describe(nil).LogValue(); empty.Kind() != slog.KindGroup {
+		t.Fatal("零值应可记录")
 	}
 }

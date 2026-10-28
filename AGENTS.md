@@ -40,6 +40,7 @@
 - `extension/` 用于基于 Go 标准库提供功能扩展，例如 `jsonx` 扩展 `encoding/json`，`logx` 扩展 `log/slog`，`reflectx` 扩展 `reflect`。
 - `extension/` 下的扩展包目录名和 Go 包名统一采用 `<功能名>x` 格式，全部使用小写字母，例如目录 `extension/jsonx`、`extension/logx` 分别对应包名 `jsonx`、`logx`。
 - 类型、函数和方法遵循常规 Go 命名，不重复添加 `x` 后缀，例如 `logx.Logger`、`logx.Config`、`logx.New(...)`。
+- `errx` 是基础错误包，生产代码仅依赖标准库，测试也不引用 logx、toolkit 等其他组件；跨组件联动测试和示例放在消费方，避免反向依赖。
 
 ## platform 职责
 

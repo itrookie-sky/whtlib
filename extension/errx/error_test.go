@@ -1,12 +1,9 @@
 package errx_test
 
 import (
-	"bytes"
-	"context"
 	"encoding/json/v2"
 	"errors"
 	"fmt"
-	"log/slog"
 	"maps"
 	"runtime"
 	"slices"
@@ -14,10 +11,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/itrookie-sky/whtlib/adapter"
 	"github.com/itrookie-sky/whtlib/extension/errx"
-	"github.com/itrookie-sky/whtlib/extension/logx"
-	"github.com/itrookie-sky/whtlib/toolkit/tkhttp"
 )
 
 type branchError struct{ children []error }
@@ -37,39 +31,6 @@ func (e *foreignError) Unwrap() (cause error)             { return e.cause }
 func (e *foreignError) ErrorCode() (code string)          { return e.code }
 func (e *foreignError) Fields() (fields map[string]any)   { return e.fields }
 func (e *foreignError) StackTrace() (frames []errx.Frame) { return e.frames }
-
-// recordingLogger 只用于验证 LogAcc.Error 的借用视图及正文序列化路径。
-type recordingLogger struct {
-	adapter.Logger
-	logger *slog.Logger
-}
-
-func (l *recordingLogger) Skip(n int) (logger adapter.Logger) { return l }
-func (l *recordingLogger) Error(ctx context.Context, args ...any) {
-	l.logger.ErrorContext(ctx, strings.TrimSuffix(fmt.Sprintln(args...), "\n"))
-}
-
-func TestPreserveErrorChain(t *testing.T) {
-	status := &tkhttp.StatusError{StatusCode: 503}
-	request := &tkhttp.RequestError{Phase: tkhttp.PhaseTransport, Err: errors.Join(tkhttp.ErrTransport, context.DeadlineExceeded, status)}
-	wrapped := errx.WithStack(errx.WithFields(request, map[string]any{"operation": "fetch"}))
-	if wrapped.Error() != request.Error() || strings.Contains(wrapped.Error(), "fetch") {
-		t.Fatalf("错误文本被元数据改变: %s", wrapped)
-	}
-	for _, target := range []error{request, status, tkhttp.ErrTransport, tkhttp.ErrHTTPStatus, context.DeadlineExceeded} {
-		if !errors.Is(wrapped, target) {
-			t.Errorf("错误类别丢失: %v", target)
-		}
-	}
-	gotRequest, ok := errors.AsType[*tkhttp.RequestError](wrapped)
-	if !ok || gotRequest != request {
-		t.Fatal("RequestError 类型丢失")
-	}
-	gotStatus, ok := errors.AsType[*tkhttp.StatusError](wrapped)
-	if !ok || gotStatus.StatusCode != 503 {
-		t.Fatal("StatusError 状态码丢失")
-	}
-}
 
 func TestStackLocationAndReuse(t *testing.T) {
 	base := errors.New("original")
@@ -257,48 +218,6 @@ func TestDescribeTreeAndSnapshots(t *testing.T) {
 	err = json.Unmarshal(encoded, &decoded)
 	if err != nil || len(decoded.Nodes) != 6 || decoded.Code != "LEFT" {
 		t.Fatalf("诊断 JSON: %s, %v", encoded, err)
-	}
-}
-
-func TestDiagnosticLogging(t *testing.T) {
-	base := &errx.CodeError{Code: "FAILED", Message: "operation failed"}
-	d := errx.Describe(errx.WithStack(errx.WithFields(base, map[string]any{"operation": "fetch"})))
-	var buffer bytes.Buffer
-	slogger := slog.New(slog.NewJSONHandler(&buffer, nil))
-	slogger.ErrorContext(t.Context(), "failed", "error", d)
-	var record map[string]any
-	err := json.Unmarshal(buffer.Bytes(), &record)
-	if err != nil {
-		t.Fatal(err)
-	}
-	detail, ok := record["error"].(map[string]any)
-	if !ok || detail["code"] != "FAILED" || detail["nodes"] == nil || detail["stack"] == nil {
-		t.Fatalf("slog 诊断: %s", buffer.String())
-	}
-	buffer.Reset()
-	acc := logx.NewLogAcc(logx.WithLogger(&recordingLogger{logger: slogger}))
-	acc.SetValue("error", d)
-	acc.Error(t.Context(), "failed")
-	record = nil
-	err = json.Unmarshal(buffer.Bytes(), &record)
-	if err != nil {
-		t.Fatalf("LogAcc 日志: %s, %v", buffer.String(), err)
-	}
-	message, ok := record["msg"].(string)
-	if !ok {
-		t.Fatalf("LogAcc 日志缺少正文: %s", buffer.String())
-	}
-	fieldsJSON, found := strings.CutPrefix(message, "failed ")
-	if !found {
-		t.Fatalf("LogAcc 正文: %s", message)
-	}
-	var fields map[string]errx.Description
-	err = json.Unmarshal([]byte(fieldsJSON), &fields)
-	if err != nil || fields["error"].Code != "FAILED" || len(fields["error"].Nodes) == 0 {
-		t.Fatalf("LogAcc 诊断: %s, %v", fieldsJSON, err)
-	}
-	if empty := errx.Describe(nil).LogValue(); empty.Kind() != slog.KindGroup {
-		t.Fatal("零值应可记录")
 	}
 }
 

@@ -262,6 +262,16 @@ defer acc.Info(ctx, "处理完成")
 defer acc.SetErr(&err) // defer 逆序执行，先保存最终错误再打印。
 ```
 
+需要堆栈、错误码和错误树等诊断字段时，由调用方接入 `errx`，再交给 LogAcc 打印：
+
+```go
+detail := errx.Describe(err)
+acc.SetValue("error", detail)
+acc.Error(ctx, "操作失败")
+```
+
+`errx` 保持标准库依赖，不引用 logx；两者的联动测试放在 logx 内。
+
 `Skip(n)` 累加当前累积器的调用跳过层数，无返回值；内部已跳过自身封装层，直接调用 Info 无需手动 Skip。`WithCost` 为消息增加 `[耗时]` 前缀。
 
 开始时间也可在创建后通过 `SetStartTime(start)` 修改，传入零时间关闭耗时前缀。修改起点与字段快照受同一把锁保护，可与打印并发执行。
