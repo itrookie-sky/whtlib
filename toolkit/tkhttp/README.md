@@ -12,7 +12,7 @@
 client, err := tkhttp.New(
     tkhttp.Config{BaseURL: "https://api.example.com/v1/"},
     tkhttp.WithLogAcc(func() (acc adapter.LogAcc) {
-        return logx.NewLogAccAdapter(logx.WithCost(time.Now()))
+        return logx.NewLogAcc(logx.WithCost(time.Now()))
     }),
 )
 if err != nil {
@@ -127,13 +127,14 @@ client, err := tkhttp.New(
 
 ## 累计日志
 
-`adapter.LogAcc` 是共享契约，`tkhttp` 不导入具体日志实现。`logx.NewLogAccAdapter(opts...)` 可创建适配实例，也可注入其他满足契约的实现。接口和具体 LogAcc 都不提供 Clone，每次调用由工厂创建新实例。
+`adapter.LogAcc` 是共享契约，`tkhttp` 不导入具体日志实现。`logx.NewLogAcc(opts...)` 返回的具体实例直接实现该接口，也可注入其他满足契约的实现。接口和具体 LogAcc 都不提供 Clone，每次调用由工厂创建新实例。
 
 ```go
 // backend 为 adapter.Logger，可使用 GoFrame 适配器，或 logx.NewLoggerAdapter(logger)。
 var factory tkhttp.LogAccFactory = func() (acc adapter.LogAcc) {
-    acc = logx.NewLogAccAdapter(logx.WithLogger(backend), logx.WithCost(time.Now()))
-    return acc.SetValue("component", "deviceAPI")
+    acc = logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
+    acc.SetValue("component", "deviceAPI")
+    return
 }
 // 初始化时通过 tkhttp.WithLogAcc(factory) 注入。
 ```

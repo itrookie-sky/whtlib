@@ -12,8 +12,6 @@ import (
 	"time"
 )
 
-const archiveTimeFormat = "20060102T150405.000000000Z"
-
 type archive struct {
 	name string
 	time time.Time

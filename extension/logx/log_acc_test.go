@@ -14,15 +14,16 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/itrookie-sky/whtlib/adapter"
 )
 
 func TestLogAccOverwriteAndSnapshot(t *testing.T) {
 	var buffer bytes.Buffer
 	logger := newBufferedLogger(t, &buffer, Config{})
 	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
-	if acc.SetValue("one", 1) != acc || acc.Update(map[string]any{"one": 2, "two": true}) != acc {
-		t.Fatal("identity changed")
-	}
+	acc.SetValue("one", 1)
+	acc.Update(map[string]any{"one": 2, "two": true})
 	source := map[string]any{"three": "before"}
 	acc.Update(source)
 	source["three"] = "after"
@@ -154,7 +155,8 @@ func TestLogAccZeroValueUsesDefault(t *testing.T) {
 	defaultLogger = newBufferedLogger(t, &buffer, Config{})
 	t.Cleanup(func() { defaultLogger = previous })
 	var acc LogAcc
-	acc.SetValue("zero", true).Info(t.Context(), "zero value")
+	acc.SetValue("zero", true)
+	acc.Info(t.Context(), "zero value")
 	if !strings.Contains(buffer.String(), `"zero":true`) {
 		t.Fatal(buffer.String())
 	}
@@ -249,7 +251,8 @@ func TestLogAccInvalidPairsAreAtomic(t *testing.T) {
 // logAccRequest 对齐 libclient.DoRequest 的延迟 Debug、Skip 和返回值指针用法。
 func logAccRequest(ctx context.Context, logger *Logger) (resRaw string, err error) {
 	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
-	defer acc.Skip(1).Debug(ctx, "DoRequest", "resRaw", &resRaw)
+	acc.Skip(1)
+	defer acc.Debug(ctx, "DoRequest", "resRaw", &resRaw)
 	defer acc.SetErr(&err)
 	acc.Update(map[string]any{"host": "example.test"})
 	resRaw = "final response"
@@ -279,4 +282,123 @@ func TestLogAccInfo(t *testing.T) {
 		"b": 456,
 		"c": true,
 	})
+}
+
+func TestLogAccNewInstanceAndStartTime(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newBufferedLogger(t, &buffer, Config{})
+	start := time.Now().Add(-time.Second)
+	loggerBackend := NewLoggerAdapter(logger)
+	first := NewLogAcc(WithLogger(loggerBackend), WithCost(start))
+	first.SetValue("source", "first")
+	first.Skip(2)
+	second := NewLogAcc(WithLogger(loggerBackend))
+	second.SetValue("source", "second")
+	second.Skip(1)
+	fields, backend, firstStart, skip := first.snapshot(nil)
+	if fields["source"] != "first" || len(fields) != 1 || backend != loggerBackend || firstStart != start || skip != 2 {
+		t.Fatalf("first instance changed: %v, %v, %d", fields, firstStart, skip)
+	}
+	fields, backend, secondStart, skip := second.snapshot(nil)
+	if fields["source"] != "second" || len(fields) != 1 || backend != loggerBackend || !secondStart.IsZero() || skip != 1 {
+		t.Fatalf("second instance shared state: %v, %v, %d", fields, secondStart, skip)
+	}
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
+	acc.SetStartTime(start)
+	acc.Info(t.Context(), "timed")
+	if !strings.Contains(buffer.String(), "] timed") {
+		t.Fatal(buffer.String())
+	}
+	buffer.Reset()
+	acc.SetStartTime(time.Time{})
+	acc.Info(t.Context(), "untimed")
+	if !strings.Contains(buffer.String(), " untimed\n") || strings.Contains(buffer.String(), "] untimed") {
+		t.Fatal(buffer.String())
+	}
+}
+
+func TestLogAccSharedContractAndCaller(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newBufferedLogger(t, &buffer, Config{Level: slog.LevelDebug})
+	var acc adapter.LogAcc = NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
+	acc.SetValue("a", 1)
+	acc.Update(map[string]any{"b": 2})
+	acc.SetStartTime(time.Time{})
+	acc.Skip(0)
+	err := errors.New("example")
+	acc.SetErr(&err)
+	_, file, line, _ := runtime.Caller(0)
+	acc.Info(t.Context(), "adapted")
+	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)+" adapted") {
+		t.Fatal(buffer.String())
+	}
+	buffer.Reset()
+	acc.Debug(t.Context(), "debug")
+	acc.Warn(t.Context(), "warn")
+	acc.Error(t.Context(), "error")
+	if strings.Count(buffer.String(), "\n") != 3 || !strings.Contains(buffer.String(), `"err":"example"`) {
+		t.Fatal(buffer.String())
+	}
+}
+
+func TestLogAccConcurrentStartAndOutput(t *testing.T) {
+	var buffer bytes.Buffer
+	logger := newBufferedLogger(t, &buffer, Config{})
+	acc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
+	var wg sync.WaitGroup
+	for worker := range 4 {
+		wg.Go(func() {
+			for range 20 {
+				acc.SetStartTime(time.Now())
+				acc.SetValue("worker", worker)
+				requestAcc := NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
+				requestAcc.SetStartTime(time.Time{})
+				requestAcc.Info(t.Context(), "request")
+				acc.Info(t.Context(), "source")
+			}
+		})
+	}
+	wg.Wait()
+	if strings.Count(buffer.String(), "\n") != 160 {
+		t.Fatal("lost concurrent records")
+	}
+}
+
+func TestLogAccTraceContext(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		key      any
+		injected bool
+	}{
+		{name: "default string key", key: "traceId"},
+		{name: "configured global key", key: testCtxKey("traceId")},
+		{name: "injected logger key", key: testCtxKey("traceId"), injected: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buffer bytes.Buffer
+			config := Config{}
+			if tc.name != "default string key" {
+				config.TraceKey = tc.key
+			}
+			logger := newBufferedLogger(t, &buffer, config)
+			var acc *LogAcc
+			if tc.injected {
+				acc = NewLogAcc(WithLogger(NewLoggerAdapter(logger)))
+			} else {
+				previous := defaultLogger
+				defaultLogger = logger
+				t.Cleanup(func() { defaultLogger = previous })
+				acc = NewLogAcc()
+			}
+			ctx := context.WithValue(t.Context(), tc.key, "trace-123")
+			func() {
+				defer acc.Info(ctx, "exit")
+				acc.SetValue("result", "done")
+			}()
+			line := buffer.String()
+			if !strings.Contains(line, `{trace-123}`) || !strings.Contains(line, `"result":"done"`) {
+				t.Fatalf("ctx or accumulated fields missing: %s", line)
+			}
+		})
+	}
 }

@@ -1,3 +1,4 @@
+// Package tkkafka 提供不依赖业务框架的 Kafka 生产、消费和资源管理能力。
 package tkkafka
 
 import (
@@ -222,4 +223,10 @@ func partitionFor(key string, partitionNum uint32) (partition int32) {
 	hash := fnv.New32a()
 	_, _ = hash.Write([]byte(key))
 	return int32(hash.Sum32() % partitionNum)
+}
+
+// ProducerMessage 定义消息键及交给 Encoder 编码的数据。
+type ProducerMessage struct {
+	Key  string `json:"key"`
+	Data any    `json:"data"`
 }

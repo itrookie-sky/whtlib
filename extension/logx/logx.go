@@ -5,10 +5,13 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"strings"
+	"sync"
 	"time"
 
+	"github.com/itrookie-sky/whtlib/adapter"
 	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
@@ -94,14 +97,6 @@ func (l *Logger) Skip(n int) (logger *Logger) {
 func (l *Logger) Close() (err error) {
 	return l.core.close()
 }
-
-type outputMode uint8
-
-const (
-	outputPlain outputMode = iota
-	outputFormatted
-	outputStructured
-)
 
 func (l *Logger) output(ctx context.Context, level slog.Level, message string, args []any, mode outputMode) {
 	if reflectx.IsNil(ctx) {
@@ -193,4 +188,204 @@ func (l *Logger) Warnf(ctx context.Context, format string, args ...any) {
 // Errorf 输出格式化错误日志。
 func (l *Logger) Errorf(ctx context.Context, format string, args ...any) {
 	l.output(ctx, slog.LevelError, format, args, outputFormatted)
+}
+
+// loggerCore 保存单个实例私有的配置和生命周期。
+type loggerCore struct {
+	mu       sync.RWMutex
+	changeMu sync.Mutex
+	config   Config
+	handler  *handler
+	closed   bool
+	closeErr error
+}
+
+func buildHandler(config Config, previous *handler) (next *handler, resolved Config, retired *fileLease, err error) {
+	resolved, err = BuildDefaultConfig(config)
+	if err != nil {
+		return
+	}
+	var old *fileLease
+	if previous != nil {
+		old = previous.state.lease
+	}
+	state := &outputState{writer: terminalOutput}
+	var lease *fileLease
+	if resolved.WriteFile {
+		var fileConfig FileConfig
+		lease, fileConfig, err = sharedFiles.acquire(resolved.File, old)
+		if err != nil {
+			return
+		}
+		resolved.File = fileConfig
+		state.writer = &dualWriter{terminal: terminalOutput, file: lease.entry.writer}
+		state.lease = lease
+	}
+	next = &handler{state: state, config: resolved}
+	if previous != nil {
+		previous.state.mu.Lock()
+		previous.state.closed = true
+		previous.state.mu.Unlock()
+		if old != lease {
+			retired = old
+		}
+	}
+	return
+}
+
+func (c *loggerCore) initialize() (err error) {
+	c.mu.RLock()
+	ready := c.handler != nil
+	closed := c.closed
+	c.mu.RUnlock()
+	if closed {
+		return os.ErrClosed
+	}
+	if ready {
+		return
+	}
+	c.changeMu.Lock()
+	defer c.changeMu.Unlock()
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.closed {
+		return os.ErrClosed
+	}
+	if c.handler != nil {
+		return
+	}
+	next, config, _, err := buildHandler(c.config, nil)
+	if err != nil {
+		return
+	}
+	c.handler = next
+	c.config = config
+	return
+}
+
+func (c *loggerCore) setConfig(update Config) (err error) {
+	// 串行完成切换与旧资源释放，避免连续更新重复打开同一文件。
+	c.changeMu.Lock()
+	defer c.changeMu.Unlock()
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return os.ErrClosed
+	}
+	next, config, retired, err := buildHandler(mergeConfig(c.config, update), c.handler)
+	if err == nil {
+		c.handler = next
+		c.config = config
+	}
+	c.mu.Unlock()
+	if err != nil {
+		return
+	}
+	// 释放配置锁后再等待旧维护任务退出，避免阻塞新配置的打印。
+	if retired != nil {
+		err = sharedFiles.release(retired)
+	}
+	return
+}
+
+func (c *loggerCore) close() (err error) {
+	c.changeMu.Lock()
+	defer c.changeMu.Unlock()
+	c.mu.Lock()
+	if c.closed {
+		c.mu.Unlock()
+		return c.closeErr
+	}
+	c.closed = true
+	var lease *fileLease
+	if c.handler != nil {
+		c.handler.state.mu.Lock()
+		c.handler.state.closed = true
+		lease = c.handler.state.lease
+		c.handler.state.mu.Unlock()
+	}
+	c.mu.Unlock()
+	if lease != nil {
+		c.closeErr = sharedFiles.release(lease)
+	}
+	return c.closeErr
+}
+
+func callerPC(skip int) (pc uintptr) {
+	// Callers、callerPC、output 和公开日志方法属于内部层。
+	var pcs [1]uintptr
+	if skip > int(^uint(0)>>1)-4 {
+		return
+	}
+	if runtime.Callers(4+skip, pcs[:]) == 0 {
+		return
+	}
+	return pcs[0]
+}
+
+var _ adapter.Logger = (*loggerAdapter)(nil)
+
+// loggerAdapter 借用日志后端，Skip 仅保存打印视图，不派生文件引用。
+type loggerAdapter struct {
+	logger *Logger
+	skip   int
+}
+
+// NewLoggerAdapter 将 logx.Logger 适配为共享日志接口；nil 使用 Default。
+// 适配器和 Skip 视图不接管后端生命周期，创建方仍负责关闭原 Logger。
+func NewLoggerAdapter(logger *Logger) (result adapter.Logger) {
+	if logger == nil {
+		logger = Default()
+	}
+	return &loggerAdapter{logger: logger}
+}
+
+func (a *loggerAdapter) Skip(n int) (logger adapter.Logger) {
+	if n < 0 || n > int(^uint(0)>>1)-a.skip {
+		panic("logx: invalid skip")
+	}
+	return &loggerAdapter{logger: a.logger, skip: a.skip + n}
+}
+
+func (a *loggerAdapter) output(ctx context.Context, level slog.Level, message string, args []any, mode outputMode) {
+	// 仅构造借用视图；额外补偿本方法一层，饱和时不记录源码位置。
+	maxSkip := int(^uint(0) >> 1)
+	totalSkip := maxSkip
+	if a.skip < maxSkip && a.logger.skip <= maxSkip-a.skip-1 {
+		totalSkip = a.logger.skip + a.skip + 1
+	}
+	view := Logger{core: a.logger.core, skip: totalSkip}
+	view.output(ctx, level, message, args, mode)
+}
+
+func (a *loggerAdapter) Debug(ctx context.Context, message string, args ...any) {
+	a.output(ctx, slog.LevelDebug, message, args, outputPlain)
+}
+
+func (a *loggerAdapter) Info(ctx context.Context, message string, args ...any) {
+	a.output(ctx, slog.LevelInfo, message, args, outputPlain)
+}
+
+func (a *loggerAdapter) Warn(ctx context.Context, message string, args ...any) {
+	a.output(ctx, slog.LevelWarn, message, args, outputPlain)
+}
+
+func (a *loggerAdapter) Error(ctx context.Context, message string, args ...any) {
+	a.output(ctx, slog.LevelError, message, args, outputPlain)
+}
+
+func (a *loggerAdapter) Debugf(ctx context.Context, format string, args ...any) {
+	a.output(ctx, slog.LevelDebug, format, args, outputFormatted)
+}
+
+func (a *loggerAdapter) Infof(ctx context.Context, format string, args ...any) {
+	a.output(ctx, slog.LevelInfo, format, args, outputFormatted)
+}
+
+func (a *loggerAdapter) Warnf(ctx context.Context, format string, args ...any) {
+	a.output(ctx, slog.LevelWarn, format, args, outputFormatted)
+}
+
+func (a *loggerAdapter) Errorf(ctx context.Context, format string, args ...any) {
+	a.output(ctx, slog.LevelError, format, args, outputFormatted)
 }

@@ -47,15 +47,16 @@ func TestGoFrameLogAccAndCaller(t *testing.T) {
 	native.SetCtxKeys(key)
 	ctx := context.WithValue(t.Context(), key, "request-001")
 	acc := logx.NewLogAcc(logx.WithLogger(backend))
+	acc.SetValue("orderId", "demo")
 	_, file, line, _ := runtime.Caller(0)
-	acc.SetValue("orderId", "demo").Info(ctx, "done", "count", 2)
+	acc.Info(ctx, "done", "count", 2)
 	output := buffer.String()
 	if !strings.Contains(output, filepath.Base(file)+":"+strconv.Itoa(line+1)) ||
 		!strings.Contains(output, `done {"count":2,"orderId":"demo"}`) || !strings.Contains(output, "request-001") {
 		t.Fatal(output)
 	}
 	buffer.Reset()
-	shared := logx.NewLogAccAdapter(logx.WithLogger(backend))
+	shared := logx.NewLogAcc(logx.WithLogger(backend))
 	_, _, line, _ = runtime.Caller(0)
 	shared.Info(ctx, "shared")
 	if !strings.Contains(buffer.String(), filepath.Base(file)+":"+strconv.Itoa(line+1)) {
@@ -94,7 +95,8 @@ func TestGoFrameLevelsFormattingAndFiltering(t *testing.T) {
 	buffer.Reset()
 	native.SetLevel(glog.LEVEL_INFO)
 	calls := 0
-	acc := logx.NewLogAcc(logx.WithLogger(backend)).SetValue("data", countedJSON{&calls})
+	acc := logx.NewLogAcc(logx.WithLogger(backend))
+	acc.SetValue("data", countedJSON{&calls})
 	acc.Debug(t.Context(), "filtered")
 	if calls != 0 || buffer.Len() != 0 {
 		t.Fatal("filtered fields were formatted")
@@ -112,7 +114,8 @@ func TestGoFrameConcurrentBorrowing(t *testing.T) {
 		group.Go(func() {
 			for range 10 {
 				acc := logx.NewLogAcc(logx.WithLogger(backend))
-				acc.SetValue("worker", worker).Info(t.Context(), "done")
+				acc.SetValue("worker", worker)
+				acc.Info(t.Context(), "done")
 			}
 		})
 	}

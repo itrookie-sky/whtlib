@@ -8,9 +8,6 @@ import (
 	"strings"
 )
 
-// legacyIV 是 GoFrame v2.9.0 gaes 默认 IV，只用于兼容旧协议。
-const legacyIV = "I Love Go Frame!"
-
 // LegacyCodec 使用旧 AES-CBC、PKCS7、标准 Base64 协议。
 //
 // 该协议使用固定 IV，未提供独立认证标签；仅供已有令牌协议迁移。

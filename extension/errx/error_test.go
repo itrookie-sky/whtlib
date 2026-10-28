@@ -280,7 +280,8 @@ func TestDiagnosticLogging(t *testing.T) {
 	}
 	buffer.Reset()
 	acc := logx.NewLogAcc(logx.WithLogger(&recordingLogger{logger: slogger}))
-	acc.SetValue("error", d).Error(t.Context(), "failed")
+	acc.SetValue("error", d)
+	acc.Error(t.Context(), "failed")
 	record = nil
 	err = json.Unmarshal(buffer.Bytes(), &record)
 	if err != nil {

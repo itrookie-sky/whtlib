@@ -59,7 +59,9 @@ func (b *recordingBackend) Error(ctx context.Context, message string, args ...an
 func TestLogAccUsesInjectedInterface(t *testing.T) {
 	var records []backendRecord
 	backend := &recordingBackend{records: &records}
-	acc := NewLogAcc(WithLogger(backend), WithCost(time.Now())).Skip(3).SetValue("z", 2)
+	acc := NewLogAcc(WithLogger(backend), WithCost(time.Now()))
+	acc.Skip(3)
+	acc.SetValue("z", 2)
 	ctx := context.WithValue(t.Context(), testKey(100), "trace")
 	acc.Debug(ctx, "done", "a", 1)
 	acc.Info(ctx, "done")
@@ -74,7 +76,9 @@ func TestLogAccUsesInjectedInterface(t *testing.T) {
 			t.Fatal(record.message)
 		}
 	}
-	acc.SetStartTime(time.Time{}).SetValue("z", 3).Info(ctx, "next")
+	acc.SetStartTime(time.Time{})
+	acc.SetValue("z", 3)
+	acc.Info(ctx, "next")
 	if records[4].message != `next {"a":1,"z":3}` || !strings.Contains(records[0].message, `"z":2`) {
 		t.Fatal("field snapshots or start time changed")
 	}
@@ -118,7 +122,9 @@ func TestLogAccBackendFilteringAndTypedNil(t *testing.T) {
 	var buffer bytes.Buffer
 	native := newBufferedLogger(t, &buffer, Config{Level: slog.LevelInfo})
 	diagnostic := captureStderr(t, func() {
-		NewLogAcc(WithLogger(NewLoggerAdapter(native))).SetValue("bad", make(chan int)).Debug(t.Context(), "filtered")
+		acc := NewLogAcc(WithLogger(NewLoggerAdapter(native)))
+		acc.SetValue("bad", make(chan int))
+		acc.Debug(t.Context(), "filtered")
 	})
 	if buffer.Len() != 0 || diagnostic != "" {
 		t.Fatalf("filtered fields were encoded: %q %q", buffer.String(), diagnostic)

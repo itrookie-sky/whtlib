@@ -8,7 +8,8 @@ native.SetStack(false)
 backend := NewGoFrameLogger(native)
 
 acc := logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
-acc.SetValue("orderId", "demo-001").Info(ctx, "订单处理完成")
+acc.SetValue("orderId", "demo-001")
+acc.Info(ctx, "订单处理完成")
 ```
 
 输出正文类似：
@@ -26,7 +27,7 @@ acc.SetValue("orderId", "demo-001").Info(ctx, "订单处理完成")
 ```go
 client, err := tkhttp.New(tkhttp.Config{BaseURL: "https://api.example.com"},
     tkhttp.WithLogAcc(func() (acc adapter.LogAcc) {
-        return logx.NewLogAccAdapter(logx.WithLogger(backend))
+        return logx.NewLogAcc(logx.WithLogger(backend))
     }),
 )
 if err != nil {

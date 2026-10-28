@@ -25,6 +25,8 @@ type LogAcc struct {
 	skip   int
 }
 
+var _ adapter.LogAcc = (*LogAcc)(nil)
+
 // LogAccOptionFunc 配置日志累积器，仅在构造期间使用。
 type LogAccOptionFunc func(acc *LogAcc)
 
@@ -51,44 +53,40 @@ func WithCost(start time.Time) (op LogAccOptionFunc) {
 }
 
 // SetStartTime 修改打印耗时的起点；零时间关闭耗时前缀。
-func (a *LogAcc) SetStartTime(start time.Time) (acc *LogAcc) {
+func (a *LogAcc) SetStartTime(start time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.start = start
-	return a
 }
 
-// SetValue 覆盖单个字段，返回原累积器。
-func (a *LogAcc) SetValue(key string, value any) (acc *LogAcc) {
+// SetValue 覆盖当前累积器的单个字段。
+func (a *LogAcc) SetValue(key string, value any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.fields == nil {
 		a.fields = make(map[string]any)
 	}
 	a.fields[key] = value
-	return a
 }
 
 // Update 将多个字段原子地合并到内部 map，重复字段使用新值。
-func (a *LogAcc) Update(values map[string]any) (acc *LogAcc) {
+func (a *LogAcc) Update(values map[string]any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if a.fields == nil {
 		a.fields = make(map[string]any, len(values))
 	}
 	maps.Copy(a.fields, values)
-	return a
 }
 
-// Skip 累加业务调用跳过层数并返回原累积器；负数和溢出会 panic。
-func (a *LogAcc) Skip(n int) (acc *LogAcc) {
+// Skip 累加当前累积器的业务调用跳过层数；负数和溢出会 panic。
+func (a *LogAcc) Skip(n int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	if n < 0 || n > int(^uint(0)>>1)-a.skip {
 		panic("logx: invalid skip")
 	}
 	a.skip += n
-	return a
 }
 
 // snapshot 先校验完整键值对，再一次性更新并复制字段，避免部分写入。
@@ -196,9 +194,9 @@ func (a *LogAcc) Error(ctx context.Context, message string, args ...any) {
 
 // SetErr 读取当前错误并覆盖 err 字段；nil 指针或 nil 错误保持已有字段。
 // 可使用 defer acc.SetErr(&err)，调用方负责同步 error 变量的读写。
-func (a *LogAcc) SetErr(value *error) (acc *LogAcc) {
+func (a *LogAcc) SetErr(value *error) {
 	if value == nil || reflectx.IsNil(*value) {
-		return a
+		return
 	}
-	return a.SetValue("err", (*value).Error())
+	a.SetValue("err", (*value).Error())
 }

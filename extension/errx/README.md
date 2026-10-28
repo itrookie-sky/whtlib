@@ -94,7 +94,8 @@ CodeError.Error 优先返回 Message，缺失时依次返回 Code、原始错误
 ```go
 detail := errx.Describe(err)
 logger.ErrorContext(ctx, "操作失败", "error", detail) // 标准 slog
-acc.SetValue("error", detail).Error(ctx, "操作失败") // logx.LogAcc
+acc.SetValue("error", detail)
+acc.Error(ctx, "操作失败") // logx.LogAcc
 ```
 
 Description 的 Message、Code、Fields、Stack 分别为根错误文本、首个业务码、合并字段、首个堆栈。

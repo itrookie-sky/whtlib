@@ -11,17 +11,6 @@ import (
 	"github.com/itrookie-sky/whtlib/extension/reflectx"
 )
 
-// GetString 读取文本，空文本仍为有效命中。
-func (c *Cache) GetString(ctx context.Context, key string) (value string, found bool, err error) {
-	data, found, err := c.Get(ctx, key)
-	return string(data), found, err
-}
-
-// SetString 保存原始文本，不添加 JSON 引号。
-func (c *Cache) SetString(ctx context.Context, key, value string, ttl time.Duration) (err error) {
-	return c.Set(ctx, key, []byte(value), ttl)
-}
-
 // SetJSON 编码成功后才替换缓存。
 func (c *Cache) SetJSON(ctx context.Context, key string, value any, ttl time.Duration) (err error) {
 	data, err := json.Marshal(value)

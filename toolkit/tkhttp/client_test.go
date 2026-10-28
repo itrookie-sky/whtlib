@@ -83,37 +83,32 @@ func (a *recordingAcc) newAcc() (acc adapter.LogAcc) {
 	return &recordingAcc{sink: a.sink, fields: make(map[string]any)}
 }
 
-func (a *recordingAcc) SetStartTime(start time.Time) (acc adapter.LogAcc) {
+func (a *recordingAcc) SetStartTime(start time.Time) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.start = start
 	a.sink.starts.Add(1)
-	return a
 }
 
-func (a *recordingAcc) SetValue(key string, value any) (acc adapter.LogAcc) {
+func (a *recordingAcc) SetValue(key string, value any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.fields[key] = value
-	return a
 }
 
-func (a *recordingAcc) Update(values map[string]any) (acc adapter.LogAcc) {
+func (a *recordingAcc) Update(values map[string]any) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	maps.Copy(a.fields, values)
-	return a
 }
 
-func (a *recordingAcc) Skip(n int) (acc adapter.LogAcc) {
+func (a *recordingAcc) Skip(n int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.skip += n
-	return a
 }
 
-func (a *recordingAcc) SetErr(value *error) (acc adapter.LogAcc) {
-	return a
+func (a *recordingAcc) SetErr(value *error) {
 }
 
 func (a *recordingAcc) emit(ctx context.Context, level string) {

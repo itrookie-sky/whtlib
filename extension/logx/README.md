@@ -116,7 +116,8 @@ orderLogger.Debug(ctx, "订单处理开始")
 
 backend := logx.NewLoggerAdapter(orderLogger)
 acc := logx.NewLogAcc(logx.WithLogger(backend))
-acc.SetValue("orderId", "o123").Info(ctx, "订单处理完成")
+acc.SetValue("orderId", "o123")
+acc.Info(ctx, "订单处理完成")
 ```
 
 克隆继承当前 Level 快照、TraceKey、ContextFields、文件配置和 Skip，不额外增加调用跳过层数。
@@ -218,7 +219,8 @@ acc.Info(ctx, "创建订单", "status", "done", "count", 2)
 ```go
 backend := logx.NewLoggerAdapter(logger) // logger 为 *logx.Logger，可共享 backend。
 acc := logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
-acc.SetValue("userId", 1001).Update(map[string]any{"action": "save"})
+acc.SetValue("userId", 1001)
+acc.Update(map[string]any{"action": "save"})
 acc.Info(ctx, "保存完成")
 ```
 
@@ -227,12 +229,13 @@ GoFrame 等后端实现 `adapter.Logger` 后可直接注入，无需创建 logx 
 ```go
 backend := NewGoFrameLogger(glog.New())
 acc := logx.NewLogAcc(logx.WithLogger(backend))
-acc.SetValue("orderId", "o123").Info(ctx, "创建订单")
+acc.SetValue("orderId", "o123")
+acc.Info(ctx, "创建订单")
 ```
 
 `NewGoFrameLogger` 为示例中的薄适配器，完整实现、HTTP 工厂及运行命令见 [GoFrame 示例](../../examples/logacc_goframe/README.md)。根模块不依赖 GoFrame；普通日志接口按正文拼接，LogAcc 将累计字段编码为正文末尾 JSON 后再交给后端，被过滤的日志不编码字段。
 
-`SetValue` 覆盖单个字段，`Update` 原子合并多个字段，均返回原累积器。Info/Debug/Warn/Error 的额外参数为 `key, value` 对，覆盖后的字段继续保留供后续打印使用；奇数参数或非 string key 会 panic，整批校验失败不会部分写入。所有打印方法必须传 ctx，无错误返回。
+`SetValue` 覆盖单个字段，`Update` 原子合并多个字段，均直接修改当前累积器且无返回值。Info/Debug/Warn/Error 的额外参数为 `key, value` 对，覆盖后的字段继续保留供后续打印使用；奇数参数或非 string key 会 panic，整批校验失败不会部分写入。所有打印方法必须传 ctx，无错误返回。
 
 `SetErr(*error)` 在调用时读取错误，保存 `err.Error()` 到 `err` 字段；nil 指针或 nil 错误不修改已有字段。不解析 GoFrame 错误码。例如在有命名返回值 err 的函数中：
 
@@ -242,24 +245,26 @@ defer acc.Info(ctx, "处理完成")
 defer acc.SetErr(&err) // defer 逆序执行，先保存最终错误再打印。
 ```
 
-`Skip(n)` 累加调用跳过层数，返回原累积器；内部已跳过自身封装层，直接调用 Info 无需手动 Skip。`WithCost` 为消息增加 `[耗时]` 前缀。
+`Skip(n)` 累加当前累积器的调用跳过层数，无返回值；内部已跳过自身封装层，直接调用 Info 无需手动 Skip。`WithCost` 为消息增加 `[耗时]` 前缀。
 
 开始时间也可在创建后通过 `SetStartTime(start)` 修改，传入零时间关闭耗时前缀。修改起点与字段快照受同一把锁保护，可与打印并发执行。
 
 ```go
 requestAcc := logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
 requestAcc.SetStartTime(time.Now())
-requestAcc.SetValue("requestId", "r1").Info(ctx, "处理完成")
+requestAcc.SetValue("requestId", "r1")
+requestAcc.Info(ctx, "处理完成")
 ```
 
-LogAcc 不提供 Clone。每次调用通过 NewLogAcc 或 NewLogAccAdapter 创建新累加器，字段 map、起点和 Skip 各自独立；可以共享同一日志后端。
+LogAcc 不提供 Clone。每次调用通过 NewLogAcc 创建新累加器，字段 map、起点和 Skip 各自独立；可以共享同一日志后端。
 
-多个组件通过 `adapter.LogAcc` 注入时，可使用 `logx.NewLogAccAdapter(opts...)`，支持相同的 WithLogger/WithCost、SetStartTime 和原有链式方法。私有包装仅补偿自身一层调用栈；NewLogAcc 与具体链式返回类型保持兼容。
+`*logx.LogAcc` 直接实现 `adapter.LogAcc`，可通过 `logx.NewLogAcc(opts...)` 创建后注入其他组件，无需额外包装。SetStartTime、SetValue、Update、SetErr、Skip 都直接修改当前实例且无返回值，不支持链式调用；`adapter.Logger.Skip` 仍返回独立的借用视图。
 
 ```go
 factory := func() (acc adapter.LogAcc) {
-    acc = logx.NewLogAccAdapter(logx.WithLogger(backend), logx.WithCost(time.Now()))
-    return acc.SetValue("component", "http")
+    acc = logx.NewLogAcc(logx.WithLogger(backend), logx.WithCost(time.Now()))
+    acc.SetValue("component", "http")
+    return
 }
 // 可通过 tkhttp.WithLogAcc(factory) 注入，每次调用都创建新实例。
 ```

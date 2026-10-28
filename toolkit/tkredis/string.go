@@ -10,13 +10,6 @@ import (
 	"github.com/redis/go-redis/v9"
 )
 
-const (
-	// NoExpiration 是永久保存的原始 TTL 哨兵，不是负秒或负毫秒。
-	NoExpiration time.Duration = -1
-	// TTLNotFound 是 PTTL 查询中键不存在的原始哨兵，不能用于写入。
-	TTLNotFound time.Duration = -2
-)
-
 // NormalizeTTL 保留 -1 和 0，正数向上取整到毫秒，其他负数返回错误。
 func NormalizeTTL(ttl time.Duration) (normalized time.Duration, err error) {
 	if ttl < NoExpiration {

@@ -9,27 +9,11 @@ import (
 	"time"
 )
 
-// ProducerConsumerStartMode 定义生产者和消费者的启动模式。
-type ProducerConsumerStartMode int
-
-const (
-	ModeNone     ProducerConsumerStartMode = iota // 不启动生产者或消费者。
-	ModeProducer                                  // 仅启动生产者。
-	ModeConsumer                                  // 仅启动消费者。
-	ModeBoth                                      // 同时启动生产者和消费者。
-)
-
 // TopicConfig 定义 topic 的分区数、启动模式及消费组后缀。
 type TopicConfig struct {
 	PartitionNum uint32                    `json:"partitionNum"`
 	Mode         ProducerConsumerStartMode `json:"mode"`
 	Groups       []string                  `json:"groups"`
-}
-
-// ProducerMessage 定义消息键及交给 Encoder 编码的数据。
-type ProducerMessage struct {
-	Key  string `json:"key"`
-	Data any    `json:"data"`
 }
 
 // Config 保留原 plkafka 配置字段的类型、JSON 名称及单位。

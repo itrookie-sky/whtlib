@@ -52,7 +52,7 @@ whtlib/
 
 接入具体日志库时需满足完整方法签名。`logx.NewLoggerAdapter(logger)` 可将现有 `*logx.Logger` 转为 `adapter.Logger`；其他日志库可提供薄适配器，参见 [GoFrame 接入示例](examples/logacc_goframe/README.md)。Skip 返回借用视图，配置与关闭由后端创建方负责。
 
-累计结构化字段使用独立的 `adapter.LogAcc`，包含 SetStartTime、字段更新和四种打印方法。`logx.NewLogAccAdapter(...)` 提供现成适配，`logx.WithLogger(backend)` 注入 `adapter.Logger`，可使用 GoFrame 等后端。tkhttp 通过 `LogAccFactory` 在每次调用创建新累加器，LogAcc 不提供 Clone。
+累计结构化字段使用独立的 `adapter.LogAcc`，包含 SetStartTime、字段更新和四种打印方法。`logx.NewLogAcc(...)` 创建的实例直接实现该接口，`logx.WithLogger(backend)` 注入 `adapter.Logger`，可使用 GoFrame 等后端。tkhttp 通过 `LogAccFactory` 在每次调用创建新累加器，LogAcc 不提供 Clone。
 
 ## HTTP 客户端
 

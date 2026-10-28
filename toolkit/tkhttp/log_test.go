@@ -27,7 +27,11 @@ func TestLogFactoryIsolationAndRedaction(t *testing.T) {
 	config := quietConfig()
 	config.DisableLog = false
 	client := mustClient(t, config, WithLogAcc(func() (instance adapter.LogAcc) {
-		return acc.newAcc().SetValue("component", "original").SetValue("http", "stale").SetValue("biz", "stale")
+		instance = acc.newAcc()
+		instance.SetValue("component", "original")
+		instance.SetValue("http", "stale")
+		instance.SetValue("biz", "stale")
+		return
 	}), WithHTTPClient(&http.Client{Transport: transport}))
 	if acc.sink.creates.Load() != 0 {
 		t.Fatal("New must not call the log factory")
@@ -210,7 +214,7 @@ func TestLogxIntegrationCallerAndTrace(t *testing.T) {
 	config := quietConfig()
 	config.DisableLog = false
 	client := mustClient(t, config, WithLogAcc(func() (acc adapter.LogAcc) {
-		return logx.NewLogAccAdapter(logx.WithLogger(logx.NewLoggerAdapter(logger)))
+		return logx.NewLogAcc(logx.WithLogger(logx.NewLoggerAdapter(logger)))
 	}), WithHTTPClient(&http.Client{Transport: transport}), WithMiddleware(func(next Handler) (handler Handler) { return next }))
 	ctx := context.WithValue(t.Context(), traceKey{}, "trace-http")
 	_, file, doLine, _ := runtime.Caller(0)

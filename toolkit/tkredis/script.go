@@ -92,18 +92,6 @@ func (c *Client) runScript(ctx context.Context, script *redis.Script, keys []str
 	return
 }
 
-const compareDeleteScript = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('DEL', KEYS[1])
-end
-return 0`
-
-const compareExpireScript = `
-if redis.call('GET', KEYS[1]) == ARGV[1] then
-  return redis.call('PEXPIRE', KEYS[1], ARGV[2])
-end
-return 0`
-
 // Cad 原子比较字符串值，仅在一致时删除；复杂值需使用 JSON 包装。
 func (c *Client) Cad(ctx context.Context, key string, expected any) (ok bool, err error) {
 	value, err := c.Eval(ctx, compareDeleteScript, []string{key}, expected)

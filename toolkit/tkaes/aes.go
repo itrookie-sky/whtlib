@@ -8,11 +8,6 @@ import (
 	"encoding/hex"
 )
 
-const (
-	EncodingTypebase16 = "base16"
-	EncodingTypebase64 = "base64"
-)
-
 // AesUtils AES加密工具结构体
 type AesUtils struct {
 	key          []byte

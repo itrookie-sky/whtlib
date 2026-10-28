@@ -14,22 +14,6 @@ import (
 	"github.com/itrookie-sky/whtlib/toolkit/tkredis"
 )
 
-// StoreType 指定实例使用的 Store 类型。
-type StoreType string
-
-const (
-	MemoryStore StoreType = "memory"
-	RedisStore  StoreType = "redis"
-	FileStore   StoreType = "file"
-)
-
-const (
-	// NoExpiration 表示永久保存，写入和 TTL 查询均使用该原始哨兵值。
-	NoExpiration time.Duration = tkredis.NoExpiration
-	// TTLNotFound 表示键不存在，仅用于 TTL 查询结果，不能用于写入。
-	TTLNotFound time.Duration = tkredis.TTLNotFound
-)
-
 var namespacePattern = regexp.MustCompile(`^[A-Za-z0-9_-]+$`)
 
 // Config 配置独立缓存，RedisClient 始终由调用方管理。
@@ -42,49 +26,17 @@ type Config struct {
 	FilePath        string
 }
 
-// Loader 在未命中时提供字节数据。
-type Loader func(ctx context.Context) (value []byte, err error)
-
-// LoadOption 配置回源结果的缓存策略。
-type LoadOption func(options *loadOptions)
-type loadOptions struct{ cacheEmpty bool }
-
-// WithCacheEmpty 控制是否缓存 nil 回源结果，默认 true。
-func WithCacheEmpty(enabled bool) (option LoadOption) {
-	return func(options *loadOptions) { options.cacheEmpty = enabled }
-}
-
-func buildLoadOptions(options []LoadOption) (result loadOptions) {
-	result.cacheEmpty = true
-	for _, option := range options {
-		if option != nil {
-			option(&result)
-		}
-	}
-	return
-}
-
-type operation string
-
-const (
-	opSet       operation = "set"
-	opSetNX     operation = "nx"
-	opGetDelete operation = "getdel"
-	opGetExpire operation = "getexpire"
-	opGetSet    operation = "getset"
-	opCAS       operation = "cas"
-	opCAD       operation = "cad"
-)
-
 type request struct {
 	operation       operation
 	value, expected []byte
 	ttl             time.Duration
 }
+
 type outcome struct {
 	value          []byte
 	found, changed bool
 }
+
 type store interface {
 	get(context.Context, string) (value []byte, found bool, err error)
 	apply(context.Context, string, request) (result outcome, err error)
@@ -393,3 +345,14 @@ func (c *Cache) Close() (err error) {
 
 // String 返回不包含数据与连接认证信息的实例标识。
 func (c *Cache) String() (result string) { return fmt.Sprintf("tkcache(%s)", c.prefix) }
+
+// GetString 读取文本，空文本仍为有效命中。
+func (c *Cache) GetString(ctx context.Context, key string) (value string, found bool, err error) {
+	data, found, err := c.Get(ctx, key)
+	return string(data), found, err
+}
+
+// SetString 保存原始文本，不添加 JSON 引号。
+func (c *Cache) SetString(ctx context.Context, key, value string, ttl time.Duration) (err error) {
+	return c.Set(ctx, key, []byte(value), ttl)
+}

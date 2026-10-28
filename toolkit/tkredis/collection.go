@@ -12,11 +12,6 @@ type ScoredMember struct {
 	Score  float64
 }
 
-const commandExpireScript = `
-local result = redis.call(ARGV[1], KEYS[1], unpack(ARGV, 3))
-redis.call('PEXPIRE', KEYS[1], ARGV[2])
-return result`
-
 func (c *Client) collectionCommand(ctx context.Context, command, key string, expiration []time.Duration, args ...any) (value any, err error) {
 	ttl, err := collectionTTL(expiration)
 	if err != nil {

@@ -1,3 +1,4 @@
+// Package tkcache 提供统一的内存、Redis 与文件字节缓存。
 package tkcache
 
 import (
@@ -122,4 +123,27 @@ func (c *Cache) runLoad(f *flight, ttl time.Duration, loader Loader, options loa
 	lock.Unlock()
 	c.gate.RUnlock()
 	c.finish(f, value, err)
+}
+
+// Loader 在未命中时提供字节数据。
+type Loader func(ctx context.Context) (value []byte, err error)
+
+// LoadOption 配置回源结果的缓存策略。
+type LoadOption func(options *loadOptions)
+
+type loadOptions struct{ cacheEmpty bool }
+
+// WithCacheEmpty 控制是否缓存 nil 回源结果，默认 true。
+func WithCacheEmpty(enabled bool) (option LoadOption) {
+	return func(options *loadOptions) { options.cacheEmpty = enabled }
+}
+
+func buildLoadOptions(options []LoadOption) (result loadOptions) {
+	result.cacheEmpty = true
+	for _, option := range options {
+		if option != nil {
+			option(&result)
+		}
+	}
+	return
 }

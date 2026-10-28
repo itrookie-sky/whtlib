@@ -12,21 +12,6 @@ import (
 	"time"
 )
 
-const (
-	CacheModeCache int8 = 1
-	CacheModeRedis int8 = 2
-	CacheModeFile  int8 = 3
-
-	MiddlewareTypeGroup  uint = 1
-	MiddlewareTypeBind   uint = 2
-	MiddlewareTypeGlobal uint = 3
-
-	DefaultTimeout        = 10 * 24 * 60 * 60 * 1000
-	DefaultCacheKey       = "tktoken:"
-	DefaultTokenDelimiter = "_"
-	maxAttempts           = 32
-)
-
 // Store 是会话消费方所需的最小存储接口；比较操作必须由 Store 原子执行。
 //
 // 读取、写入的字节不得由调用方与存储共享可变底层数组。

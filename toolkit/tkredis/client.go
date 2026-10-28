@@ -3,7 +3,12 @@ package tkredis
 
 import (
 	"context"
+	"encoding"
+	"encoding/json"
 	"errors"
+	"reflect"
+	"slices"
+	"strings"
 	"sync"
 
 	"github.com/itrookie-sky/whtlib/adapter"
@@ -215,4 +220,111 @@ func (c *Client) Pipeline(ctx context.Context, commands ...[]any) (results []Res
 		results[i].Data, results[i].Err = command.Result()
 	}
 	return
+}
+
+// JSONValue 标记应使用 JSON 编码的命令参数。
+type JSONValue struct {
+	Value any
+}
+
+// JSON 显式标记一个 JSON 参数。
+func JSON(value any) (argument JSONValue) {
+	return JSONValue{Value: value}
+}
+
+func explicitArgs(args []any) (converted []any, err error) {
+	converted = slices.Clone(args)
+	for i, arg := range converted {
+		value, ok := arg.(JSONValue)
+		if !ok {
+			continue
+		}
+		converted[i], err = json.Marshal(value.Value)
+		if err != nil {
+			err = argumentEncodingError(i, err)
+			return
+		}
+	}
+	return
+}
+
+// EncodeArgs 复制参数切片，将 start 后的结构体、map、非字节切片和数组转为 JSON。
+// 支持 encoding.BinaryMarshaler 的参数保持原生编码；不会修改调用方切片。
+func EncodeArgs(start int, args ...any) (converted []any, err error) {
+	if start < 0 || start > len(args) {
+		err = invalidArgument("argument start index out of range")
+		return
+	}
+	converted, err = explicitArgs(args)
+	if err != nil {
+		return
+	}
+	for i := start; i < len(converted); i++ {
+		arg := converted[i]
+		_, isBytes := arg.([]byte)
+		_, isMarshaler := arg.(encoding.BinaryMarshaler)
+		if isBytes || isMarshaler {
+			continue
+		}
+		info := reflectx.OriginTypeAndKind(arg)
+		switch info.OriginKind {
+		case reflect.Struct, reflect.Map, reflect.Slice, reflect.Array:
+			converted[i], err = json.Marshal(arg)
+			if err != nil {
+				err = argumentEncodingError(i, err)
+				return
+			}
+		}
+	}
+	return
+}
+
+// DeletePrefix 扫描并删除字面量前缀匹配的键；Cluster 遍历各主节点。
+// 非事务快照，不保证覆盖并发新增的键，不关闭客户端。
+func (c *Client) DeletePrefix(ctx context.Context, prefix string) (err error) {
+	err = c.checkOpen()
+	if err != nil {
+		return
+	}
+	if prefix == "" {
+		return invalidArgument("key prefix is empty")
+	}
+	ctx = nonNilContext(ctx)
+	if cluster, ok := c.native.(*redis.ClusterClient); ok {
+		return cluster.ForEachMaster(ctx, func(ctx context.Context, client *redis.Client) (err error) {
+			return deletePrefixNode(ctx, client, prefix)
+		})
+	}
+	return deletePrefixNode(ctx, c.native, prefix)
+}
+
+func deletePrefixNode(ctx context.Context, client redis.UniversalClient, prefix string) (err error) {
+	pattern := strings.NewReplacer("\\", "\\\\", "*", "\\*", "?", "\\?", "[", "\\[", "]", "\\]").Replace(prefix) + "*"
+	var cursor uint64
+	for {
+		err = ctx.Err()
+		if err != nil {
+			return
+		}
+		var keys []string
+		keys, cursor, err = client.Scan(ctx, cursor, pattern, 128).Result()
+		if err != nil {
+			return
+		}
+		if len(keys) > 0 {
+			pipeline := client.Pipeline()
+			for _, key := range keys {
+				if strings.HasPrefix(key, prefix) {
+					pipeline.Del(ctx, key)
+				}
+			}
+			_, err = pipeline.Exec(ctx)
+			if err != nil {
+				return
+			}
+		}
+		if cursor == 0 {
+			return
+		}
+	}
 }
